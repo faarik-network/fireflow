@@ -10,6 +10,5 @@ export default defineNuxtConfig({
       title: 'FireFlow – Hidrolik Hesap',
       meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }]
     }
-  },
-  nitro: { preset: 'node-server' }
+  }
 })
