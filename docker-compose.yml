@@ -1,0 +1,10 @@
+services:
+  fireflow:
+    build: .
+    image: fireflow:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NUXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
+      NUXT_PUBLIC_SUPABASE_KEY: ${SUPABASE_KEY}

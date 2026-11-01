@@ -1,0 +1,135 @@
+import { defineStore } from 'pinia'
+import type { HNode, HPipe, Tool, DN, CFactor, GridData, SolveResult, NodeType, DesignSettings } from '~/types/hydraulic'
+import { defaultDesign, evaluateDesign, autoDesignArea } from '~/utils/nfpa'
+import { DEFAULT_PUMP } from '~/utils/hydraulicSolver'
+
+const uid = () => crypto.randomUUID()
+export const GRID = 20
+const PREFIX: Record<NodeType, string> = { source: 'K', joint: 'B', sprinkler: 'S', hydrant: 'H' }
+function nextName(prefix: string, names: (string | undefined)[]) {
+  let m = 0
+  for (const n of names) {
+    const v = n && n.startsWith(prefix) ? Number(n.slice(prefix.length)) : NaN
+    if (Number.isFinite(v)) m = Math.max(m, v)
+  }
+  return `${prefix}${m + 1}`
+}
+
+export const useSimulator = defineStore('simulator', () => {
+  const nodes = ref<HNode[]>([])
+  const pipes = ref<HPipe[]>([])
+  const tool = ref<Tool>('select')
+  const selected = ref<{ kind: 'node' | 'pipe'; id: string } | null>(null)
+  const snap = ref(true)
+  const view = ref({ zoom: 1, panX: 0, panY: 0 })
+  const defaults = ref<{ dn: DN; c: CFactor; z: number }>({ dn: 100, c: 120, z: 0 })
+  const fitRequest = ref(0)
+  const showLabels = ref(true)
+  const design = ref<DesignSettings>(defaultDesign())
+
+  const result = computed<SolveResult>(() => solveNetwork(nodes.value, pipes.value))
+  const designEval = computed(() => (design.value.hazard === 'off' ? null : evaluateDesign(nodes.value, result.value, design.value)))
+
+  const snapPt = (x: number, y: number) =>
+    snap.value ? { x: Math.round(x / GRID) * GRID, y: Math.round(y / GRID) * GRID } : { x, y }
+
+  function addNode(type: NodeType, x: number, y: number): HNode {
+    const p = snapPt(x, y)
+    const n: HNode = { id: uid(), name: nextName(PREFIX[type], nodes.value.map((x) => x.name)), type, x: p.x, y: p.y, z: defaults.value.z }
+    if (type === 'source') n.pressure = 6
+    if (type === 'sprinkler') n.k = 80
+    if (type === 'hydrant') n.demand = 950
+    nodes.value.push(n)
+    return n
+  }
+
+  function addPipe(from: string, to: string, kind: 'pipe' | 'pump' = 'pipe'): HPipe | null {
+    if (from === to) return null
+    if (pipes.value.some((p) => (p.from === from && p.to === to) || (p.from === to && p.to === from))) return null
+    const p: HPipe = { id: uid(), name: nextName(kind === 'pump' ? 'PM' : 'P', pipes.value.map((x) => x.name)), from, to, dn: defaults.value.dn, c: defaults.value.c }
+    if (kind === 'pump') { p.kind = 'pump'; p.pump = { ...DEFAULT_PUMP } }
+    pipes.value.push(p)
+    return p
+  }
+
+  function removeNode(id: string) {
+    nodes.value = nodes.value.filter((n) => n.id !== id)
+    pipes.value = pipes.value.filter((p) => p.from !== id && p.to !== id)
+    if (selected.value?.id === id) selected.value = null
+  }
+  function removePipe(id: string) {
+    pipes.value = pipes.value.filter((p) => p.id !== id)
+    if (selected.value?.id === id) selected.value = null
+  }
+  function clear() {
+    nodes.value = []
+    pipes.value = []
+    selected.value = null
+  }
+  function fitView() { fitRequest.value++ }
+  /** Adı olmayan (eski) öğelere otomatik ad ver */
+  function ensureNames() {
+    for (const n of nodes.value) if (!n.name) n.name = nextName(PREFIX[n.type], nodes.value.map((x) => x.name))
+    for (const p of pipes.value) if (!p.name) p.name = nextName(p.kind === 'pump' ? 'PM' : 'P', pipes.value.map((x) => x.name))
+  }
+
+  /** 3×3 ızgaralı örnek ağ: pompa, ana hat, 3 açık sprinkler, kapalı sprinkler ve hidrant */
+  function loadExample() {
+    const M = 20
+    const N = (type: NodeType, mx: number, my: number, extra: Partial<HNode> = {}): HNode => ({ id: uid(), type, x: mx * M, y: my * M, z: 0, ...extra })
+    const P = N('source', 3, 15, { pressure: 5 })
+    const B = [10, 20, 30].map((x) => N('joint', x, 15))
+    const U = [10, 20, 30].map((x) => N('joint', x, 10))
+    const top = [10, 20, 30].map((x, i) => N('sprinkler', x, 5, { k: 80, open: i === 2 }))
+    const bot = [10, 20, 30].map((x, i) => N('sprinkler', x, 20, { k: 80, open: i > 0 }))
+    const H = N('hydrant', 36, 15, { demand: 950, open: false })
+    const all = [P, ...B, ...U, ...bot, ...top, H]
+    const L = (a: HNode, b: HNode, dn: DN): HPipe => ({ id: uid(), from: a.id, to: b.id, dn, c: 120 })
+    nodes.value = all
+    pipes.value = [
+      L(P, B[0], 100), L(B[0], B[1], 100), L(B[1], B[2], 100), L(B[2], H, 65),
+      ...[0, 1, 2].flatMap((i) => [L(B[i], U[i], 80), L(U[i], top[i], 50), L(B[i], bot[i], 50)]),
+      L(U[0], U[1], 80), L(U[1], U[2], 80)
+    ]
+    ensureNames()
+    design.value = { hazard: 'custom', density: 6.1, area: 36, coverage: 12, hose: 0 }
+    selected.value = null
+    tool.value = 'select'
+    fitView()
+  }
+
+  /** Önerilen uzak alanı aç, diğer sprinklerleri kapat */
+  function openDesignArea() {
+    const ids = new Set(autoDesignArea(nodes.value, pipes.value, design.value))
+    for (const n of nodes.value) if (n.type === 'sprinkler') n.open = ids.has(n.id)
+    return ids.size
+  }
+
+  const selectedNode = computed(() => (selected.value?.kind === 'node' ? nodes.value.find((n) => n.id === selected.value!.id) : undefined))
+  const selectedPipe = computed(() => (selected.value?.kind === 'pipe' ? pipes.value.find((p) => p.id === selected.value!.id) : undefined))
+
+  const serialized = computed<GridData>(() => ({
+    version: 1,
+    nodes: nodes.value,
+    pipes: pipes.value,
+    view: view.value,
+    design: design.value
+  }))
+
+  function load(data: Partial<GridData> | null | undefined) {
+    nodes.value = data?.nodes ?? []
+    pipes.value = data?.pipes ?? []
+    view.value = data?.view ?? { zoom: 1, panX: 0, panY: 0 }
+    ensureNames()
+    design.value = data?.design ? { ...defaultDesign(), ...data.design } : defaultDesign()
+    selected.value = null
+    tool.value = 'select'
+    if (nodes.value.length) fitView()
+  }
+
+  return {
+    nodes, pipes, tool, selected, snap, view, defaults, fitRequest, showLabels, design, designEval, openDesignArea, result,
+    selectedNode, selectedPipe, serialized,
+    snapPt, addNode, addPipe, removeNode, removePipe, clear, fitView, load, loadExample
+  }
+})
