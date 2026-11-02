@@ -54,9 +54,10 @@ function onDown(e: PointerEvent) {
     return
   }
   if (e.button !== 0) return
+  if (sim.readOnly && tool !== 'select') return
 
   if (tool === 'select') {
-    if (node) { sim.selected = { kind: 'node', id: node.id }; drag = { id: node.id } }
+    if (node) { sim.selected = { kind: 'node', id: node.id }; drag = sim.readOnly ? null : { id: node.id } }
     else { const pipe = hitPipe(p.x, p.y); if (pipe) sim.selected = { kind: 'pipe', id: pipe.id } }
   } else if (tool === 'delete') {
     if (node) sim.removeNode(node.id)
@@ -80,13 +81,14 @@ function onMove(e: PointerEvent) {
     sim.view.panX = drag.px + (s.x - drag.sx)
     sim.view.panY = drag.py + (s.y - drag.sy)
   } else {
-    const n = sim.nodes.find((n) => n.id === drag!.id)
+    const dragId = drag.id
+    const n = sim.nodes.find((n) => n.id === dragId)
     if (n) { const q = sim.snapPt(p.x, p.y); n.x = q.x; n.y = q.y }
   }
 }
 function onUp() { drag = null }
 function onDbl(e: MouseEvent) {
-  if (sim.tool !== 'select') return
+  if (sim.tool !== 'select' || sim.readOnly) return
   const r = canvas.value!.getBoundingClientRect()
   const p = toWorld(e.clientX - r.left, e.clientY - r.top)
   const n = hitNode(p.x, p.y)
@@ -127,7 +129,7 @@ function draw(ts = performance.now()) {
   const { zoom, panX, panY } = sim.view
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
-  ctx.fillStyle = BG
+  ctx.fillStyle = COL.bg
   ctx.fillRect(0, 0, w, h)
 
   // grid
@@ -150,7 +152,7 @@ function draw(ts = performance.now()) {
     if (!a || !b) continue
     const r = res.pipes[p.id]
     if (p.kind === 'pump') { drawPump(a, b, r, sim.selected?.id === p.id); continue }
-    const color = !r || !res.nodes[a.id]?.reachable || Math.abs(r.flow) < 0.5 ? '#94A3B8' : r.status === 'danger' ? COL.fire : r.status === 'warn' ? COL.warn : COL.ok
+    const color = !r || !res.nodes[a.id]?.reachable || Math.abs(r.flow) < 0.5 ? COL.idle : r.status === 'danger' ? COL.fire : r.status === 'warn' ? COL.warn : COL.ok
     const isSel = sim.selected?.kind === 'pipe' && sim.selected.id === p.id
     ctx.strokeStyle = isSel ? COL.sel : color
     ctx.lineWidth = (2 + p.dn / 40) * (isSel ? 1.4 : 1)
@@ -186,12 +188,12 @@ function draw(ts = performance.now()) {
     const r = res.nodes[n.id]
     drawNode(n, isSel, r?.reachable !== false)
     if (r && zoom > 0.4 && sim.showLabels) {
-      const t = n.type === 'source' ? `${(n.pressure ?? 0).toFixed(1)} bar` : r.reachable ? `${r.pressure.toFixed(2)} bar` : 'bağlı değil'
+      const t = n.type === 'source' ? (n.supply ? `${r.pressure.toFixed(2)} bar (statik ${(n.pressure ?? 0).toFixed(1)})` : `${(n.pressure ?? 0).toFixed(1)} bar`) : r.reachable ? `${r.pressure.toFixed(2)} bar` : 'bağlı değil'
       const zt = n.z ? ` · ${n.z > 0 ? '+' : ''}${n.z} m` : ''
-      label(t + (r.reachable ? zt : ''), n.x, n.y + NODE_R + 12, r.reachable ? COL.ink : '#94A3B8', zoom)
+      label(t + (r.reachable ? zt : ''), n.x, n.y + NODE_R + 12, r.reachable ? COL.ink : COL.off, zoom)
       const showFlow = (n.type === 'sprinkler' || n.type === 'hydrant') && n.open !== false
       if (showFlow) label(`${r.flow.toFixed(0)} L/dk`, n.x, n.y - NODE_R - 6, COL.steel, zoom)
-      if (n.name) label(n.name, n.x, n.y - NODE_R - (showFlow ? 19 : 7), '#B9CBD9', zoom)
+      if (n.name) label(n.name, n.x, n.y - NODE_R - (showFlow ? 19 : 7), COL.name, zoom)
     }
   }
   ctx.restore()
@@ -201,7 +203,7 @@ function draw(ts = performance.now()) {
 function drawPump(a: HNode, b: HNode, r: { flow: number; lossBar: number } | undefined, sel: boolean) {
   const c = ctx!
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
-  c.strokeStyle = sel ? COL.sel : '#4C8DFF'; c.lineWidth = 5; c.lineCap = 'round'
+  c.strokeStyle = sel ? COL.sel : COL.pump; c.lineWidth = 5; c.lineCap = 'round'
   c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke()
   // yön oku
   const ang = Math.atan2(b.y - a.y, b.x - a.x)
@@ -209,36 +211,36 @@ function drawPump(a: HNode, b: HNode, r: { flow: number; lossBar: number } | und
   c.beginPath(); c.moveTo(mx + Math.cos(ang) * 16, my + Math.sin(ang) * 16)
   c.lineTo(mx + Math.cos(ang + 2.5) * 12, my + Math.sin(ang + 2.5) * 12)
   c.lineTo(mx + Math.cos(ang - 2.5) * 12, my + Math.sin(ang - 2.5) * 12); c.closePath(); c.fill()
-  c.beginPath(); c.arc(mx, my, 11, 0, Math.PI * 2); c.fillStyle = BG; c.fill(); c.lineWidth = 2.5; c.stroke()
-  c.fillStyle = '#4C8DFF'; c.font = 'bold 12px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('P', mx, my + 0.5)
-  if (r && sim.view.zoom > 0.4) label(`+${(-r.lossBar).toFixed(2)} bar · ${r.flow.toFixed(0)} L/dk`, mx, my - 22, '#4C8DFF', sim.view.zoom)
+  c.beginPath(); c.arc(mx, my, 11, 0, Math.PI * 2); c.fillStyle = COL.bg; c.fill(); c.lineWidth = 2.5; c.stroke()
+  c.fillStyle = COL.pump; c.font = 'bold 12px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('P', mx, my + 0.5)
+  if (r && sim.view.zoom > 0.4) label(`+${(-r.lossBar).toFixed(2)} bar · ${r.flow.toFixed(0)} L/dk`, mx, my - 22, COL.pump, sim.view.zoom)
 }
 function drawNode(n: HNode, sel: boolean, ok: boolean) {
   const c = ctx!
   c.lineWidth = 2
-  c.strokeStyle = sel ? COL.sel : ok ? COL.ink : '#64748B'
-  c.fillStyle = BG
+  c.strokeStyle = sel ? COL.sel : ok ? COL.ink : COL.off
+  c.fillStyle = COL.bg
   c.beginPath()
   if (n.type === 'source') {
-    c.rect(n.x - NODE_R, n.y - NODE_R, NODE_R * 2, NODE_R * 2); c.fillStyle = '#4C8DFF'; c.fill(); c.stroke()
+    c.rect(n.x - NODE_R, n.y - NODE_R, NODE_R * 2, NODE_R * 2); c.fillStyle = COL.pump; c.fill(); c.stroke()
     c.fillStyle = '#fff'; c.font = 'bold 10px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('P', n.x, n.y + 0.5)
   } else if (n.type === 'sprinkler') {
     const open = n.open !== false
-    c.arc(n.x, n.y, NODE_R, 0, Math.PI * 2); c.fillStyle = open ? COL.fire : BG; c.fill(); c.stroke()
+    c.arc(n.x, n.y, NODE_R, 0, Math.PI * 2); c.fillStyle = open ? COL.fire : COL.bg; c.fill(); c.stroke()
     c.beginPath(); c.moveTo(n.x - 4, n.y - 4); c.lineTo(n.x + 4, n.y + 4); c.moveTo(n.x + 4, n.y - 4); c.lineTo(n.x - 4, n.y + 4)
     c.strokeStyle = open ? '#fff' : COL.steel; c.lineWidth = 1.5; c.stroke()
   } else if (n.type === 'hydrant') {
     c.moveTo(n.x, n.y - NODE_R - 2); c.lineTo(n.x + NODE_R + 2, n.y + NODE_R); c.lineTo(n.x - NODE_R - 2, n.y + NODE_R); c.closePath()
-    c.fillStyle = n.open === false ? BG : '#E5483A'; c.fill(); c.stroke()
+    c.fillStyle = n.open === false ? COL.bg : '#E5483A'; c.fill(); c.stroke()
   } else {
-    c.arc(n.x, n.y, 5, 0, Math.PI * 2); c.fillStyle = BG; c.fill(); c.stroke()
+    c.arc(n.x, n.y, 5, 0, Math.PI * 2); c.fillStyle = COL.bg; c.fill(); c.stroke()
   }
 }
 function label(t: string, x: number, y: number, color: string, zoom: number) {
   const c = ctx!
   c.font = `${11 / Math.max(zoom, 0.7)}px ui-sans-serif, system-ui, sans-serif`
   c.textAlign = 'center'; c.textBaseline = 'middle'
-  c.lineWidth = 3 / zoom; c.strokeStyle = 'rgba(14,24,34,.9)'; c.strokeText(t, x, y)
+  c.lineWidth = 3 / zoom; c.strokeStyle = COL.halo; c.strokeText(t, x, y)
   c.fillStyle = color; c.fillText(t, x, y)
 }
 
@@ -255,6 +257,7 @@ function resize() {
 
 let ro: ResizeObserver
 onMounted(() => {
+  COL = { ...PAL[theme.value] }
   ctx = canvas.value!.getContext('2d')
   animEnabled = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
   ro = new ResizeObserver(resize); ro.observe(wrap.value!)
@@ -264,6 +267,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { ro?.disconnect(); window.removeEventListener('keydown', onKey); cancelAnimationFrame(raf) })
 
+watch(theme, (t) => { COL = { ...PAL[t] }; schedule() })
 watch(() => sim.fitRequest, () => nextTick(() => { fit(); schedule() }))
 watch(() => sim.tool, () => { pipeStart.value = null })
 watch([() => sim.showLabels, () => sim.nodes, () => sim.pipes, () => sim.view, () => sim.selected, () => sim.result, mouse, pipeStart], schedule, { deep: true })

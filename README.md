@@ -19,3 +19,14 @@ Plan 1 kare = 1 m; her düğümün kotu (z, m) var. Toplam yük H = P + z·0.098
 - “Uzak alanı aç”: kaynağa en uzak sprinkler + en yakın komşuları (yaklaşık öneri). “Talep noktası”: pompasız sistemde gereken kaynak basıncını ve marjı hesaplar.
 - Pompa: 2 nokta (n=2) veya 3 nokta (kapalı vana + tasarım + aşırı yük; n eğriden bulunur). NFPA 20 uyarıları: churn ≤ %140, %150 debide ≥ %65 basınç.
 - Testler: `npm run test:solver`
+
+## Şebeke test eğrisi ve tema
+- Su kaynağı düğümünde “Şebeke testi” açılırsa kaynak basıncı debiyle düşer: P(Q) = Ps − (Ps − Pr)·(Q/Qt)^1.85 (Ps statik, Pr test debisi Qt'deki artık basınç). Test debisi aşılırsa eğri ekstrapole edilir ve uyarı verilir.
+- Açık/koyu tema: başlıktaki güneş/ay düğmesi; tercih tarayıcıda saklanır (varsayılan koyu).
+
+## Firmalar (çok kiracılı)
+1. `supabase/schema.sql` → ardından `supabase/migrations/002_companies.sql` dosyasını SQL Editor'de çalıştırın.
+2. Supabase Auth ayarlarında **Confirm email açık kalmalı** (davetler yalnızca doğrulanmış e-postaya uygulanır).
+3. Roller: **OWNER** (her şey, rol/sahiplik), **ADMIN** (üye davet/çıkarma, firma projelerini düzenleme), **MEMBER**.
+4. Firma üyeleri birbirinin profilini ve firma projelerini görür; düzenleme/silme yalnızca proje sahibi ile OWNER/ADMIN'dedir. Diğerleri projeyi salt okunur açar ve “Kopya oluştur” ile kendi kopyasını alabilir.
+5. Tüm kurallar veritabanında RLS + SECURITY DEFINER fonksiyonlarla uygulanır; arayüz yalnızca yansıtır.
