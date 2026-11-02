@@ -12,7 +12,9 @@ export interface HNode {
   area?: number // m² – bu sprinklerin koruma alanı (boşsa projedeki varsayılan)
   open?: boolean // sprinkler/hidrant açık mı (varsayılan true)
   z?: number // m – kot (yükseklik), varsayılan 0
-  pressure?: number // bar – source / pump discharge pressure
+  pressure?: number // bar – kaynak statik basıncı (supply yoksa sabit basınç)
+  /** Şebeke testi: Q=flow'da artık basınç=residual → P(Q) = Ps − (Ps−Pr)·(Q/flow)^1.85 */
+  supply?: { flow: number; residual: number }
   k?: number // L/min/√bar – sprinkler K-factor
   demand?: number // L/min – hydrant fixed flow
 }
@@ -25,6 +27,7 @@ export interface HPipe {
   dn: DN
   c: CFactor
   kind?: 'pipe' | 'pump' // varsayılan 'pipe'
+  fixedR?: number // yalnızca çözücü içi: sabit direnç (şebeke eğrisi bağlantısı)
   /** Pompa eğrisi: H(Q) = h0 − r·Q² ; r, (qd,hd) tasarım noktasından türetilir */
   pump?: PumpCurve
 }

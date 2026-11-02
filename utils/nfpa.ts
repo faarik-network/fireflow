@@ -1,5 +1,5 @@
 import type { HNode, HPipe, SolveResult, DesignSettings, HazardClass } from '~/types/hydraulic'
-import { solveNetwork, PX_PER_M, MIN_SPRINKLER_BAR } from './hydraulicSolver'
+import { solveNetwork, supplyPressure, PX_PER_M, MIN_SPRINKLER_BAR } from './hydraulicSolver'
 
 /**
  * NFPA 13 yoğunluk/alan eğrilerinden sık kullanılan tasarım noktaları (SI'ya çevrilmiş) ve hortum payları.
@@ -105,7 +105,7 @@ export function autoDesignArea(nodes: HNode[], pipes: HPipe[], d: DesignSettings
   return ids
 }
 
-export interface DemandPoint { required: number | null; available: number | null; note?: string }
+export interface DemandPoint { required: number | null; available: number | null; flow?: number; note?: string }
 
 /** Pompasız sistemde yoğunluk (ve min. 0,5 bar) için gereken en düşük kaynak basıncı (ikiye bölme). */
 export function requiredSourcePressure(nodes: HNode[], pipes: HPipe[], d: DesignSettings): DemandPoint {
@@ -117,7 +117,7 @@ export function requiredSourcePressure(nodes: HNode[], pipes: HPipe[], d: Design
   if (!nodes.some((n) => n.type === 'sprinkler' && n.open !== false)) return { required: null, available, note: 'Açık sprinkler yok.' }
 
   const ok = (P: number) => {
-    const ns = nodes.map((n) => (n.type === 'source' ? { ...n, pressure: P } : n))
+    const ns = nodes.map((n) => (n.type === 'source' ? { ...n, pressure: P, supply: undefined } : n))
     const r = solveNetwork(ns, pipes)
     if (!evaluateDesign(ns, r, d).densityOk) return false
     return ns.every((n) => !(n.type === 'sprinkler' && n.open !== false && r.nodes[n.id]?.reachable) || r.nodes[n.id].pressure >= MIN_SPRINKLER_BAR)
@@ -127,5 +127,12 @@ export function requiredSourcePressure(nodes: HNode[], pipes: HPipe[], d: Design
   if (ok(0)) return { required: 0, available }
   let lo = 0
   for (let i = 0; i < 26; i++) { const mid = (lo + hi) / 2; ok(mid) ? (hi = mid) : (lo = mid) }
+  // Şebeke test eğrisi varsa, talep debisinde kaynağın gerçekten verebildiği basıncı karşılaştır
+  const sup = sources.find((s) => s.supply)
+  if (sup) {
+    const ns = nodes.map((n) => (n.type === 'source' ? { ...n, pressure: hi, supply: undefined } : n))
+    const q = solveNetwork(ns, pipes).totalFlow
+    return { required: hi, available: supplyPressure(sup, q), flow: q }
+  }
   return { required: hi, available }
 }

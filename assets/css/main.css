@@ -6,6 +6,14 @@
   --s50: 22 34 46; --s100: 27 41 54; --s200: 38 55 71; --s300: 53 73 92; --s400: 95 116 135;
   --s500: 140 160 176; --s600: 169 186 199; --s700: 196 209 219; --s800: 228 236 242; --s900: 242 246 249;
 }
+/* Açık tema */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --paper: #e0e0e0e0; --ink: #14202B; --fire: #D6402B;
+  --c-white: 255 255 255;
+  --s50: 248 250 252; --s100: 241 245 249; --s200: 226 232 240; --s300: 203 213 225; --s400: 148 163 184;
+  --s500: 100 116 139; --s600: 71 85 105; --s700: 51 65 85; --s800: 30 41 59; --s900: 15 23 42;
+}
 html, body { background: var(--paper); color: var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 table { font-variant-numeric: tabular-nums; }
 .brand { font-family: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", ui-sans-serif, sans-serif; font-weight: 800; font-stretch: condensed; text-transform: uppercase; letter-spacing: .01em; }
@@ -18,11 +26,13 @@ table { font-variant-numeric: tabular-nums; }
 .input { @apply w-full rounded border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700; color: var(--ink); }
 .label { @apply mb-1 block text-xs font-medium text-slate-600; }
 
-/* Renkli yardımcıların koyu karşılıkları */
-.bg-green-100 { background-color: #12351f } .text-green-800 { color: #7be0a4 }
-.bg-amber-100 { background-color: #3d2c0a } .text-amber-800 { color: #f5c26b }
-.bg-red-100 { background-color: #3d1511 } .text-red-800 { color: #ff9b8a }
-.bg-blue-50 { background-color: #12304a } .bg-amber-50 { background-color: #2e2410 } .text-amber-900 { color: #f5d28f }
-.text-amber-700, .text-amber-600 { color: #f2a33a } .text-red-600 { color: #ff7a62 }
-.text-green-700 { color: #4ade80 } .text-blue-700 { color: #7db0ff }
-.border-green-600 { border-color: #2fbf71 } .border-red-600 { border-color: #ff7a62 }
+/* Renkli yardımcıların koyu karşılıkları (açık temada Tailwind varsayılanı geçerli) */
+:root:not([data-theme="light"]) .bg-green-100 { background-color: #12351f } :root:not([data-theme="light"]) .text-green-800 { color: #7be0a4 }
+:root:not([data-theme="light"]) .bg-amber-100 { background-color: #3d2c0a } :root:not([data-theme="light"]) .text-amber-800 { color: #f5c26b }
+:root:not([data-theme="light"]) .bg-red-100 { background-color: #3d1511 } :root:not([data-theme="light"]) .text-red-800 { color: #ff9b8a }
+:root:not([data-theme="light"]) .bg-blue-50 { background-color: #12304a } :root:not([data-theme="light"]) .bg-amber-50 { background-color: #2e2410 }
+:root:not([data-theme="light"]) .text-amber-900 { color: #f5d28f }
+:root:not([data-theme="light"]) .text-amber-700, :root:not([data-theme="light"]) .text-amber-600 { color: #f2a33a }
+:root:not([data-theme="light"]) .text-red-600 { color: #ff7a62 } :root:not([data-theme="light"]) .text-green-700 { color: #4ade80 }
+:root:not([data-theme="light"]) .text-blue-700 { color: #7db0ff }
+:root:not([data-theme="light"]) .border-green-600 { border-color: #2fbf71 } :root:not([data-theme="light"]) .border-red-600 { border-color: #ff7a62 }

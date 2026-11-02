@@ -20,6 +20,7 @@ async function submit() {
 
 <template>
   <main class="mx-auto grid min-h-screen max-w-md content-center px-4">
+    <div class="absolute right-4 top-4"><ThemeToggle /></div>
     <h1 class="brand text-4xl">Fire<b>Flow</b></h1>
     <p class="mb-6 mt-1 text-slate-600">Sprinkler ağınızı çizin, basınç ve debiyi anında görün.</p>
     <form class="space-y-3 rounded-lg border border-slate-200 bg-white p-5" @submit.prevent="submit">

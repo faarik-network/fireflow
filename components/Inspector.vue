@@ -28,6 +28,38 @@ const three = computed({
     else { delete pump.value.q2; delete pump.value.h2 }
   }
 })
+const supplyOn = computed({
+  get: () => !!sim.selectedNode?.supply,
+  set: (v: boolean) => {
+    const n = sim.selectedNode
+    if (!n) return
+    if (v) n.supply = { flow: 1900, residual: Math.round((n.pressure ?? 0) * 0.7 * 10) / 10 }
+    else delete n.supply
+  }
+})
+const supplyWarn = computed(() => {
+  const n = sim.selectedNode
+  if (!n?.supply) return ''
+  if (!(n.supply.flow > 0)) return 'Test debisi 0’dan büyük olmalı.'
+  if (!(n.supply.residual >= 0 && n.supply.residual < (n.pressure ?? 0))) return 'Artık basınç, statik basıncın altında olmalı (aksi halde sabit basınç kullanılır).'
+  return ''
+})
+// Şebeke eğrisi grafiği: P(Q) = Ps − (Ps−Pr)(Q/Qt)^1.85
+const supplyCurve = computed(() => {
+  const n = sim.selectedNode
+  if (!n?.supply || supplyWarn.value) return null
+  const ps = n.pressure ?? 0, qt = n.supply.flow
+  const qmax = qt * 1.6
+  const sx = (q: number) => M.l + (q / qmax) * (W - M.l - M.r)
+  const sy = (p: number) => Ht - M.b - (Math.max(p, 0) / ps) * (Ht - M.t - M.b)
+  const pts = Array.from({ length: 31 }, (_, i) => { const q = (qmax * i) / 30; return `${sx(q).toFixed(1)},${sy(supplyPressure(n, q)).toFixed(1)}` })
+  const res = sim.result.nodes[n.id]
+  return {
+    d: 'M' + pts.join(' L'), qmax, ps,
+    test: { x: sx(qt), y: sy(n.supply.residual) },
+    op: res && res.flow > 0 ? { x: sx(res.flow), y: sy(res.pressure) } : null
+  }
+})
 const curveWarn = computed(() => {
   if (!pump.value) return ''
   if (pump.value.h0 < pump.value.hd * 1.001) return 'Kapalı vana basıncı, tasarım basıncından büyük olmalı.'
@@ -105,8 +137,28 @@ const curveWarn = computed(() => {
         <label v-if="sim.selectedNode.type === 'sprinkler' || sim.selectedNode.type === 'hydrant'" class="flex items-center gap-2">
           <input type="checkbox" :checked="sim.selectedNode.open !== false" @change="sim.selectedNode!.open = ($event.target as HTMLInputElement).checked" /> Açık (su veriyor)
         </label>
-        <div v-if="sim.selectedNode.type === 'source'"><label class="label">Kaynak basıncı (bar) – depo için 0</label>
-          <input class="input" type="number" min="0" step="0.1" :value="sim.selectedNode.pressure" @input="sim.selectedNode!.pressure = num($event)" /></div>
+        <template v-if="sim.selectedNode.type === 'source'">
+          <div><label class="label">Statik basınç (bar) – depo için 0</label>
+            <input class="input" type="number" min="0" step="0.1" :value="sim.selectedNode.pressure" @input="sim.selectedNode!.pressure = num($event)" /></div>
+          <label class="flex items-center gap-2 text-xs"><input type="checkbox" v-model="supplyOn" /> Şebeke testi (basınç–debi eğrisi)</label>
+          <div v-if="supplyOn && sim.selectedNode.supply" class="grid grid-cols-2 gap-2">
+            <div><label class="label">Test debisi (L/dk)</label><input class="input" type="number" min="1" step="50" v-model.number="sim.selectedNode.supply.flow" /></div>
+            <div><label class="label">Artık basınç (bar)</label><input class="input" type="number" min="0" step="0.1" v-model.number="sim.selectedNode.supply.residual" /></div>
+          </div>
+          <p v-if="supplyWarn" class="text-xs text-amber-700">{{ supplyWarn }}</p>
+          <svg v-if="supplyCurve" :viewBox="`0 0 ${W} ${Ht}`" class="w-full rounded border border-slate-200 bg-white" role="img" aria-label="Şebeke basınç–debi eğrisi">
+            <line :x1="M.l" :y1="Ht - M.b" :x2="W - M.r" :y2="Ht - M.b" stroke="#94A3B8" />
+            <line :x1="M.l" :y1="M.t" :x2="M.l" :y2="Ht - M.b" stroke="#94A3B8" />
+            <path :d="supplyCurve.d" fill="none" stroke="#2FBF71" stroke-width="2" />
+            <circle :cx="supplyCurve.test.x" :cy="supplyCurve.test.y" r="3.5" fill="none" stroke="#8CA0B0" stroke-width="1.5" />
+            <circle v-if="supplyCurve.op" :cx="supplyCurve.op.x" :cy="supplyCurve.op.y" r="4.5" fill="#D6402B" />
+            <text :x="M.l - 4" :y="M.t + 8" text-anchor="end" font-size="9" fill="#8CA0B0">{{ supplyCurve.ps.toFixed(1) }}</text>
+            <text :x="M.l - 4" :y="Ht - M.b" text-anchor="end" font-size="9" fill="#8CA0B0">0</text>
+            <text :x="W - M.r" :y="Ht - 8" text-anchor="end" font-size="9" fill="#8CA0B0">{{ supplyCurve.qmax.toFixed(0) }} L/dk</text>
+            <text :x="M.l + 4" :y="Ht - 8" font-size="9" fill="#8CA0B0">bar</text>
+          </svg>
+          <p v-if="supplyCurve" class="text-xs text-slate-500"><span style="color:#D6402B">●</span> çalışma noktası · <span>○</span> test noktası</p>
+        </template>
         <div v-else-if="sim.selectedNode.type === 'sprinkler'"><label class="label">K faktörü (L/dk/√bar)</label>
           <input class="input" type="number" min="1" step="1" :value="sim.selectedNode.k" @input="sim.selectedNode!.k = num($event)" /></div>
         <div v-else-if="sim.selectedNode.type === 'hydrant'"><label class="label">Sabit debi (L/dk)</label>

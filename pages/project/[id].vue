@@ -79,6 +79,7 @@ const stats = computed(() => {
         <button class="btn" @click="exportCsv"><Icon name="lucide:table" />CSV</button>
         <button class="btn" @click="loadExample"><Icon name="lucide:network" />Örnek ağ</button>
         <label class="btn cursor-pointer"><input type="checkbox" v-model="sim.showLabels" />Etiketler</label>
+        <ThemeToggle />
         <button class="btn" @click="clearAll"><Icon name="lucide:trash-2" />Tuvali temizle</button>
       </div>
     </header>

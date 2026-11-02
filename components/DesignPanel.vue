@@ -69,7 +69,7 @@ const f = (v: number, n = 1) => v.toFixed(n)
 
       <div v-if="dp" class="rounded border border-slate-300 p-2 text-xs">
         <template v-if="dp.required !== null">
-          Gereken kaynak basıncı <b>{{ f(dp.required, 2) }} bar</b>, mevcut {{ f(dp.available ?? 0, 2) }} bar →
+          Gereken kaynak basıncı <b>{{ f(dp.required, 2) }} bar</b>, mevcut {{ f(dp.available ?? 0, 2) }} bar<template v-if="dp.flow"> ({{ f(dp.flow, 0) }} L/dk’da şebeke eğrisinden)</template> →
           <b :class="(dp.available ?? 0) >= dp.required ? 'text-green-700' : 'text-red-600'">
             {{ (dp.available ?? 0) >= dp.required ? 'marj +' : 'eksik ' }}{{ f(Math.abs((dp.available ?? 0) - dp.required), 2) }} bar
           </b>

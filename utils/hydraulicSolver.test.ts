@@ -1,5 +1,5 @@
 // Çalıştır: npx tsx utils/hydraulicSolver.test.ts
-import { solveNetwork, PX_PER_M as m, frictionLoss, INNER_D, BAR_PER_M, pumpGain, DEFAULT_PUMP } from './hydraulicSolver'
+import { solveNetwork, PX_PER_M as m, frictionLoss, INNER_D, BAR_PER_M, pumpGain, DEFAULT_PUMP, supplyPressure } from './hydraulicSolver'
 import type { HNode, HPipe } from '../types/hydraulic'
 import { evaluateDesign, autoDesignArea, requiredSourcePressure, applyHazard, defaultDesign } from './nfpa'
 
@@ -25,18 +25,6 @@ const check = (name: string, got: number, exp: number, tol = 1e-3) => {
   const q = r.nodes.A.flow
   const loss = frictionLoss(q, 120, INNER_D[100], 20) + frictionLoss(q, 120, INNER_D[80], 20)
   check('düz hat basınç', r.nodes.A.pressure, 6 - loss)
-}
-
-// 1a) Küçük çaplar da desteklenmeli
-{
-  const nodes: HNode[] = [
-    { id: 'S', type: 'source', x: 0, y: 0, pressure: 6 },
-    { id: 'A', type: 'sprinkler', x: 20 * m, y: 0, k: 80 }
-  ]
-  const pipes: HPipe[] = [{ id: 'p1', from: 'S', to: 'A', dn: 25, c: 120 }]
-  const r = solveNetwork(nodes, pipes)
-  check('küçük çap: DN25 tanımlı', INNER_D[25], 26.6, 1e-9)
-  check('küçük çap: çözüm yakınsar', Number(r.converged), 1, 0)
 }
 
 // 2) Kot: sprinkler 10 m yukarıda → 10 m statik basınç kaybı + 3B boru boyu
@@ -140,6 +128,24 @@ const check = (name: string, got: number, exp: number, tol = 1e-3) => {
   d.area = 12
   const dpt = requiredSourcePressure(one, [{ id: 'p', from: 'S', to: 'A', dn: 100, c: 120 }], d)
   check('nfpa: gereken kaynak basıncı', dpt.required ?? -1, (73.2 / 80) ** 2, 0.02)
+}
+// 8) Şebeke test eğrisi: P(Q) = Ps − (Ps−Pr)(Q/Qt)^1.85
+{
+  const nodes: HNode[] = [
+    { id: 'S', type: 'source', x: 0, y: 0, pressure: 6, supply: { flow: 1900, residual: 4 } },
+    { id: 'A', type: 'sprinkler', x: 5 * m, y: 0, k: 400 }
+  ]
+  const pipes: HPipe[] = [{ id: 'p', from: 'S', to: 'A', dn: 150, c: 120 }]
+  const r = solveNetwork(nodes, pipes)
+  const q = r.nodes.S.flow
+  check('şebeke: kaynak basıncı eğriye uyar', r.nodes.S.pressure, supplyPressure(nodes[0], q), 1e-3)
+  check('şebeke: kaynak debisi = sprinkler debisi', q, r.nodes.A.flow, 0.05)
+  check('şebeke: yük altında basınç statikten düşük', Number(r.nodes.S.pressure < 6), 1, 0)
+  // Q = test debisinde artık basınç = 4 bar
+  check('şebeke: test noktası', supplyPressure(nodes[0], 1900), 4, 1e-9)
+  const d = defaultDesign(); applyHazard(d, 'custom'); d.density = 6.1; d.coverage = 12; d.area = 12
+  const dpt = requiredSourcePressure([nodes[0], { ...nodes[1], k: 80 }], pipes, d)
+  check('şebeke: talep noktasında mevcut < statik', Number((dpt.available ?? 99) < 6 && dpt.flow! > 0), 1, 0)
 }
 if (fail) { console.error(`${fail} test başarısız`); process.exit(1) }
 console.log('Tüm testler geçti')

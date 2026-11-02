@@ -111,7 +111,7 @@ function linkDy(g: Link, q: number): number {
  * - Boru: Hazen-Williams, boy = √(plan² + Δz²)
  * - Pompa: from→to yönlü, tek yön (çek valf), H_to − H_from = h0 − r·Q²
  */
-export function solveNetwork(nodes: HNode[], pipes: HPipe[], opts = { maxIter: 150, tol: 1e-6 }): SolveResult {
+function solveCore(nodes: HNode[], pipes: HPipe[], opts: { maxIter: number; tol: number }): SolveResult {
   const warnings: string[] = []
   const result: SolveResult = { converged: false, iterations: 0, totalFlow: 0, nodes: {}, pipes: {}, warnings }
 
@@ -128,7 +128,7 @@ export function solveNetwork(nodes: HNode[], pipes: HPipe[], opts = { maxIter: 1
       const d = INNER_D[p.dn] ?? 100
       const isPump = p.kind === 'pump'
       const pc = pumpCoef(p.pump ?? DEFAULT_PUMP)
-      return { p, pump: isPump, length, d, R: unitResistance(p.c, d) * length, h0: pc.h0, r: pc.r, n: pc.n, qd: p.pump?.qd ?? DEFAULT_PUMP.qd }
+      return { p, pump: isPump, length, d, R: p.fixedR ?? unitResistance(p.c, d) * length, h0: pc.h0, r: pc.r, n: pc.n, qd: p.pump?.qd ?? DEFAULT_PUMP.qd }
     })
 
   // Kaynaktan erişilebilirlik (BFS)
@@ -271,6 +271,10 @@ export function solveNetwork(nodes: HNode[], pipes: HPipe[], opts = { maxIter: 1
       if (q <= 1e-2 && active.some((a) => a.i === i)) warnings.push(`Pompa ${nm(g.p)}: akış yok (çek valf kapalı).`)
       return
     }
+    if (g.p.fixedR !== undefined) {
+      result.pipes[g.p.id] = { kind: 'pipe', flow: q, velocity: 0, lossBar: g.R * Math.pow(Math.abs(q), EXP), length: 0, innerD: 0, status: 'ok' }
+      return
+    }
     const v = velocity(q, g.d)
     result.pipes[g.p.id] = {
       kind: 'pipe', flow: q, velocity: v, lossBar: frictionLoss(q, g.p.c, g.d, g.length),
@@ -284,6 +288,40 @@ export function solveNetwork(nodes: HNode[], pipes: HPipe[], opts = { maxIter: 1
   result.iterations = iter
   if (!converged && free.length) warnings.push('Çözücü yakınsamadı.')
   return result
+}
+
+/**
+ * Şebeke test eğrisi olan kaynak: sabit basınçlı (Ps) gizli bir düğüm + R·Q^1.85 kayıplı gizli bağlantı ile
+ * modellenir; kaynak düğümü serbest düğüm olur ve artık basıncı çözülür.
+ */
+export function solveNetwork(nodes: HNode[], pipes: HPipe[], opts = { maxIter: 150, tol: 1e-6 }): SolveResult {
+  const valid = (n: HNode) => n.type === 'source' && !!n.supply && n.supply.flow > 0 && n.supply.residual >= 0 && n.supply.residual < (n.pressure ?? 0)
+  const sup = nodes.filter(valid)
+  if (!sup.length) return solveCore(nodes, pipes, opts)
+  const vNodes: HNode[] = [], vPipes: HPipe[] = []
+  const base = nodes.map((n) => (valid(n) ? { ...n, type: 'joint' as const } : n))
+  for (const s of sup) {
+    const ps = s.pressure ?? 0
+    const { flow, residual } = s.supply!
+    vNodes.push({ id: `${s.id}#sup`, type: 'source', x: s.x, y: s.y, z: s.z, pressure: ps })
+    vPipes.push({ id: `${s.id}#lnk`, from: `${s.id}#sup`, to: s.id, dn: 100, c: 120, fixedR: (ps - residual) / Math.pow(flow, EXP) })
+  }
+  const r = solveCore([...base, ...vNodes], [...pipes, ...vPipes], opts)
+  for (const s of sup) {
+    const q = Math.abs(r.pipes[`${s.id}#lnk`]?.flow ?? 0)
+    if (r.nodes[s.id]) r.nodes[s.id].flow = q
+    if (q > s.supply!.flow * 1.0001) r.warnings.push(`Kaynak ${nm(s)}: debi test debisini (${s.supply!.flow.toFixed(0)} L/dk) aşıyor; eğri ekstrapole ediliyor.`)
+    delete r.pipes[`${s.id}#lnk`]
+    delete r.nodes[`${s.id}#sup`]
+  }
+  return r
+}
+
+/** Kaynağın verdiği basınç (bar) – Q debisinde */
+export function supplyPressure(n: HNode, q: number): number {
+  const ps = n.pressure ?? 0
+  if (!n.supply || !(n.supply.flow > 0) || !(n.supply.residual < ps)) return ps
+  return ps - (ps - n.supply.residual) * Math.pow(Math.max(q, 0) / n.supply.flow, EXP)
 }
 
 const nm = (x: { id: string; name?: string }) => x.name ?? x.id.slice(0, 4)
