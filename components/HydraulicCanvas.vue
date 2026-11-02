@@ -58,9 +58,10 @@ function onDown(e: PointerEvent) {
     return
   }
   if (e.button !== 0) return
+  if (sim.readOnly && tool !== 'select') return
 
   if (tool === 'select') {
-    if (node) { sim.selected = { kind: 'node', id: node.id }; drag = { id: node.id } }
+    if (node) { sim.selected = { kind: 'node', id: node.id }; drag = sim.readOnly ? null : { id: node.id } }
     else { const pipe = hitPipe(p.x, p.y); if (pipe) sim.selected = { kind: 'pipe', id: pipe.id } }
   } else if (tool === 'delete') {
     if (node) sim.removeNode(node.id)
@@ -84,13 +85,14 @@ function onMove(e: PointerEvent) {
     sim.view.panX = drag.px + (s.x - drag.sx)
     sim.view.panY = drag.py + (s.y - drag.sy)
   } else {
-    const n = sim.nodes.find((n) => n.id === drag!.id)
+    const dragId = drag.id
+    const n = sim.nodes.find((n) => n.id === dragId)
     if (n) { const q = sim.snapPt(p.x, p.y); n.x = q.x; n.y = q.y }
   }
 }
 function onUp() { drag = null }
 function onDbl(e: MouseEvent) {
-  if (sim.tool !== 'select') return
+  if (sim.tool !== 'select' || sim.readOnly) return
   const r = canvas.value!.getBoundingClientRect()
   const p = toWorld(e.clientX - r.left, e.clientY - r.top)
   const n = hitNode(p.x, p.y)

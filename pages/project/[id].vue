@@ -3,8 +3,11 @@ import type { Tool } from '~/types/hydraulic'
 definePageMeta({ middleware: 'auth' })
 
 const route = useRoute()
-const client = useSupabaseClient()
+const client = useSupabaseClient<any>()
+const user = useSupabaseUser()
+const co = useCompany()
 const sim = useSimulator()
+const ownerName = ref('')
 const title = ref('Yükleniyor…')
 const status = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const ready = ref(false)
@@ -22,9 +25,18 @@ const tools: { id: Tool; label: string; icon: string }[] = [
 ]
 
 onMounted(async () => {
-  const { data, error } = await client.from('projects').select('title,grid_data').eq('id', route.params.id as string).single()
+  if (!co.loaded.value) await co.refresh()
+  const { data, error } = await client.from('projects')
+    .select('title,grid_data,user_id,company_id,owner:profiles!user_id(full_name,email)')
+    .eq('id', route.params.id as string).single()
   if (error || !data) { await navigateTo('/dashboard'); return }
   title.value = data.title
+  // Düzenleme: proje sahibi veya aynı firmanın OWNER/ADMIN'i (asıl denetim veritabanı RLS'inde)
+  const owner = data.user_id === user.value?.id
+  const admin = !!data.company_id && data.company_id === co.company.value?.id && co.isAdmin.value
+  sim.readOnly = !(owner || admin)
+  const o = data.owner as unknown as { full_name: string | null; email: string } | null
+  ownerName.value = o?.full_name || o?.email || 'Eski üye'
   sim.load(data.grid_data)
   await nextTick()
   ready.value = true
@@ -37,10 +49,20 @@ async function save() {
   status.value = error ? 'error' : 'saved'
 }
 watch(() => sim.serialized, () => {
-  if (!ready.value) return
+  if (!ready.value || sim.readOnly) return
   clearTimeout(timer); timer = setTimeout(save, 1500)
 }, { deep: true })
-onBeforeUnmount(() => { clearTimeout(timer); if (ready.value && status.value === 'saving') save() })
+onBeforeUnmount(() => { clearTimeout(timer); if (ready.value && !sim.readOnly && status.value === 'saving') save(); sim.readOnly = false })
+
+/** Salt okunur projenin kendi kopyasını oluştur */
+async function duplicate() {
+  if (!user.value) return
+  const { data, error } = await client.from('projects')
+    .insert({ title: `${title.value} (kopya)`, user_id: user.value.id, grid_data: sim.serialized })
+    .select('id').single()
+  if (error) { alert(error.message); return }
+  await navigateTo(`/project/${data.id}`, { external: true })
+}
 
 const slug = () => title.value.toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').replace(/^-|-$/g, '') || 'proje'
 function exportCsv() { downloadText(`${slug()}-hidrolik.csv`, buildCsv(sim.nodes, sim.pipes, sim.result)) }
@@ -69,18 +91,20 @@ const stats = computed(() => {
       <NuxtLink to="/dashboard" class="btn" aria-label="Projelere dön"><Icon name="lucide:arrow-left" /></NuxtLink>
       <h1 class="brand truncate text-xl">{{ title }}</h1>
       <span class="text-xs text-slate-500" :class="status === 'error' && 'text-red-600'" aria-live="polite">{{ statusText }}</span>
+      <span v-if="sim.readOnly" class="rounded-full border border-slate-300 px-2.5 py-0.5 text-xs">Salt okunur · {{ ownerName }}</span>
+      <button v-if="sim.readOnly" class="btn" @click="duplicate"><Icon name="lucide:copy" />Kopya oluştur</button>
       <div class="ml-4 flex flex-wrap gap-1">
-        <button v-for="t in tools" :key="t.id" class="btn" :class="sim.tool === t.id && 'btn-active'" :title="t.label" :aria-label="t.label" :aria-pressed="sim.tool === t.id" @click="sim.tool = t.id">
+        <button v-for="t in tools" :key="t.id" class="btn" :class="sim.tool === t.id && 'btn-active'" :title="t.label" :aria-label="t.label" :aria-pressed="sim.tool === t.id" :disabled="sim.readOnly && t.id !== 'select'" @click="sim.tool = t.id">
           <Icon :name="t.icon" /><span class="hidden xl:inline">{{ t.label }}</span>
         </button>
         <span class="mx-1 w-px bg-slate-200" />
         <button class="btn" @click="sim.fitView()"><Icon name="lucide:maximize" />Sığdır</button>
         <button class="btn" @click="exportPdf" title="Yazdır / PDF olarak kaydet"><Icon name="lucide:file-text" />Rapor (PDF)</button>
         <button class="btn" @click="exportCsv"><Icon name="lucide:table" />CSV</button>
-        <button class="btn" @click="loadExample"><Icon name="lucide:network" />Örnek ağ</button>
+        <button class="btn" :disabled="sim.readOnly" @click="loadExample"><Icon name="lucide:network" />Örnek ağ</button>
         <label class="btn cursor-pointer"><input type="checkbox" v-model="sim.showLabels" />Etiketler</label>
         <ThemeToggle />
-        <button class="btn" @click="clearAll"><Icon name="lucide:trash-2" />Tuvali temizle</button>
+        <button class="btn" :disabled="sim.readOnly" @click="clearAll"><Icon name="lucide:trash-2" />Tuvali temizle</button>
       </div>
     </header>
 
@@ -102,8 +126,10 @@ const stats = computed(() => {
         <ul v-if="r.warnings.length" class="space-y-1 border-b border-slate-200 bg-amber-50 p-3 text-xs text-amber-900" role="status">
           <li v-for="(w, i) in r.warnings.slice(0, 8)" :key="i">⚠ {{ w }}</li>
         </ul>
-        <DesignPanel />
-        <Inspector />
+        <fieldset :disabled="sim.readOnly" class="contents">
+          <DesignPanel />
+          <Inspector />
+        </fieldset>
       </aside>
       <div class="min-h-0 border-t border-r border-slate-200 bg-white"><ResultsTables /></div>
     </div>

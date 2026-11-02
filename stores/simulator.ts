@@ -25,6 +25,8 @@ export const useSimulator = defineStore('simulator', () => {
   const defaults = ref<{ dn: DN; c: CFactor; z: number }>({ dn: 100, c: 120, z: 0 })
   const fitRequest = ref(0)
   const showLabels = ref(true)
+  /** Başkasının projesini (yetkisiz) açınca true: düzenleme ve kaydetme kapalı */
+  const readOnly = ref(false)
   const design = ref<DesignSettings>(defaultDesign())
 
   const result = computed<SolveResult>(() => solveNetwork(nodes.value, pipes.value))
@@ -53,15 +55,18 @@ export const useSimulator = defineStore('simulator', () => {
   }
 
   function removeNode(id: string) {
+    if (readOnly.value) return
     nodes.value = nodes.value.filter((n) => n.id !== id)
     pipes.value = pipes.value.filter((p) => p.from !== id && p.to !== id)
     if (selected.value?.id === id) selected.value = null
   }
   function removePipe(id: string) {
+    if (readOnly.value) return
     pipes.value = pipes.value.filter((p) => p.id !== id)
     if (selected.value?.id === id) selected.value = null
   }
   function clear() {
+    if (readOnly.value) return
     nodes.value = []
     pipes.value = []
     selected.value = null
@@ -75,6 +80,7 @@ export const useSimulator = defineStore('simulator', () => {
 
   /** 3×3 ızgaralı örnek ağ: pompa, ana hat, 3 açık sprinkler, kapalı sprinkler ve hidrant */
   function loadExample() {
+    if (readOnly.value) return
     const M = 20
     const N = (type: NodeType, mx: number, my: number, extra: Partial<HNode> = {}): HNode => ({ id: uid(), type, x: mx * M, y: my * M, z: 0, ...extra })
     const P = N('source', 3, 15, { pressure: 5 })
@@ -100,6 +106,7 @@ export const useSimulator = defineStore('simulator', () => {
 
   /** Önerilen uzak alanı aç, diğer sprinklerleri kapat */
   function openDesignArea() {
+    if (readOnly.value) return 0
     const ids = new Set(autoDesignArea(nodes.value, pipes.value, design.value))
     for (const n of nodes.value) if (n.type === 'sprinkler') n.open = ids.has(n.id)
     return ids.size
@@ -128,7 +135,7 @@ export const useSimulator = defineStore('simulator', () => {
   }
 
   return {
-    nodes, pipes, tool, selected, snap, view, defaults, fitRequest, showLabels, design, designEval, openDesignArea, result,
+    nodes, pipes, tool, selected, snap, view, defaults, fitRequest, showLabels, readOnly, design, designEval, openDesignArea, result,
     selectedNode, selectedPipe, serialized,
     snapPt, addNode, addPipe, removeNode, removePipe, clear, fitView, load, loadExample
   }

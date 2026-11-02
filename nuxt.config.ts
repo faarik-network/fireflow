@@ -12,6 +12,5 @@ export default defineNuxtConfig({
       script: [{ innerHTML: "try{var t=localStorage.getItem('ff-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}", tagPosition: 'head' }],
       meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }]
     }
-  },
-  nitro: { preset: 'node-server' }
+  }
 })

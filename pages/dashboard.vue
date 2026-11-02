@@ -38,13 +38,13 @@ async function create() {
   if (err) { error.value = err.message; return }
   navigateTo(`/project/${data.id}`)
 }
-async function rename(p: any) {
+async function rename(p: Row) {
   const t = prompt('Yeni proje adı', p.title)
   if (!t?.trim()) return
   await client.from('projects').update({ title: t.trim(), updated_at: new Date().toISOString() }).eq('id', p.id)
   refresh()
 }
-async function remove(p: any) {
+async function remove(p: Row) {
   if (!confirm(`“${p.title}” silinsin mi? Bu işlem geri alınamaz.`)) return
   await client.from('projects').delete().eq('id', p.id)
   refresh()
@@ -90,12 +90,15 @@ const fmt = (d: string) => new Date(d).toLocaleString('tr-TR', { dateStyle: 'med
     <ul v-else class="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
       <li v-for="p in shown" :key="p.id" class="flex flex-wrap items-center justify-between gap-3 p-4">
         <NuxtLink :to="`/project/${p.id}`" class="min-w-0 flex-1">
-          <div class="truncate font-medium">{{ p.title }}</div>
-          <div class="truncate text-sm text-slate-500">{{ p.description || 'Açıklama yok' }} · {{ fmt(p.updated_at) }}</div>
+          <div class="truncate font-medium">{{ p.title }}
+            <span v-if="p.company_id" class="ml-2 rounded-full border border-slate-300 px-2 py-0.5 text-xs font-normal text-slate-500">Firma</span>
+            <span v-if="!canEdit(p)" class="ml-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs font-normal text-slate-500">Salt okunur</span>
+          </div>
+          <div class="truncate text-sm text-slate-500">{{ p.description || 'Açıklama yok' }} · {{ ownerName(p) }} · {{ fmt(p.updated_at) }}</div>
         </NuxtLink>
-        <button class="btn" @click="rename(p)">Yeniden adlandır</button>
+        <button v-if="canEdit(p)" class="btn" @click="rename(p)">Yeniden adlandır</button>
         <NuxtLink :to="`/project/${p.id}`" class="btn">Aç</NuxtLink>
-        <button class="btn" @click="remove(p)">Sil</button>
+        <button v-if="canEdit(p)" class="btn" @click="remove(p)">Sil</button>
       </li>
     </ul>
   </main>

@@ -147,5 +147,5 @@ const check = (name: string, got: number, exp: number, tol = 1e-3) => {
   const dpt = requiredSourcePressure([nodes[0], { ...nodes[1], k: 80 }], pipes, d)
   check('şebeke: talep noktasında mevcut < statik', Number((dpt.available ?? 99) < 6 && dpt.flow! > 0), 1, 0)
 }
-if (fail) { console.error(`${fail} test başarısız`); process.exit(1) }
+if (fail) throw new Error(`${fail} test başarısız`)
 console.log('Tüm testler geçti')
