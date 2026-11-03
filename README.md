@@ -25,8 +25,9 @@ Plan 1 kare = 1 m; her düğümün kotu (z, m) var. Toplam yük H = P + z·0.098
 - Açık/koyu tema: başlıktaki güneş/ay düğmesi; tercih tarayıcıda saklanır (varsayılan koyu).
 
 ## Firmalar (çok kiracılı)
-1. `supabase/schema.sql` → ardından `supabase/migrations/002_companies.sql` dosyasını SQL Editor'de çalıştırın.
+1. `supabase/schema.sql` → ardından sırayla `supabase/migrations/002_companies.sql` ve `003_project_locks.sql` dosyalarını SQL Editor'de çalıştırın.
 2. Supabase Auth ayarlarında **Confirm email açık kalmalı** (davetler yalnızca doğrulanmış e-postaya uygulanır).
 3. Roller: **OWNER** (her şey, rol/sahiplik), **ADMIN** (üye davet/çıkarma, firma projelerini düzenleme), **MEMBER**.
-4. Firma üyeleri birbirinin profilini ve firma projelerini görür; düzenleme/silme yalnızca proje sahibi ile OWNER/ADMIN'dedir. Diğerleri projeyi salt okunur açar ve “Kopya oluştur” ile kendi kopyasını alabilir.
-5. Tüm kurallar veritabanında RLS + SECURITY DEFINER fonksiyonlarla uygulanır; arayüz yalnızca yansıtır.
+4. Firma üyeleri birbirinin profilini ve firma projelerini görür. Silme yalnızca proje sahibi ile OWNER/ADMIN'dedir.
+5. **Proje kilidi** (`supabase/migrations/003_project_locks.sql`): firma projesini her üye düzenleyebilir, ama aynı anda yalnızca bir kişi. Projeyi açan kilidi alır (90 sn geçerli, açıkken 30 sn'de bir yenilenir; 10 dk hareketsizlikte bırakılır). Diğerleri salt okunur görür, kilit boşalınca “Düzenlemeye başla” ile devam eder; proje sahibi ve OWNER/ADMIN “Kilidi devral” diyebilir. Kilidini kaybeden kullanıcı kaydedilmemiş çalışmasını “Kopya oluştur” ile saklayabilir.
+6. Tüm kurallar veritabanında RLS + SECURITY DEFINER fonksiyonlarla uygulanır; arayüz yalnızca yansıtır.

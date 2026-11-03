@@ -9,6 +9,8 @@ const projects = ref<Row[]>([])
 const loading = ref(true), error = ref(''), joined = ref(false)
 const title = ref(''), description = ref('')
 const filter = ref<'all' | 'mine' | 'company'>('all')
+/** project_id → şu an düzenleyen kişi (yalnızca aktif kilitler görünür) */
+const editing = ref<Record<string, string>>({})
 
 async function refresh() {
   loading.value = true
@@ -17,6 +19,9 @@ async function refresh() {
     .order('updated_at', { ascending: false })
   if (err) error.value = err.message
   projects.value = (data ?? []) as unknown as Row[]
+  const { data: locks } = await client.from('project_locks').select('project_id, user_id, holder:profiles!user_id(full_name,email)')
+  editing.value = Object.fromEntries((locks ?? []).filter((l: any) => l.user_id !== user.value?.id)
+    .map((l: any) => [l.project_id, l.holder?.full_name || l.holder?.email || 'Başka bir kullanıcı']))
   loading.value = false
 }
 onMounted(async () => {
@@ -26,7 +31,11 @@ onMounted(async () => {
 })
 
 const mine = (p: Row) => p.user_id === user.value?.id
-const canEdit = (p: Row) => mine(p) || (!!p.company_id && p.company_id === co.company.value?.id && co.isAdmin.value)
+const sameCompany = (p: Row) => !!p.company_id && p.company_id === co.company.value?.id
+/** Düzenleme/yeniden adlandırma: sahibi veya aynı firmanın her üyesi (firma projelerinde kilitle) */
+const canEdit = (p: Row) => mine(p) || sameCompany(p)
+/** Silme: sahibi veya OWNER/ADMIN */
+const canDelete = (p: Row) => mine(p) || (sameCompany(p) && co.isAdmin.value)
 const shown = computed(() => projects.value.filter((p) => filter.value === 'all' || (filter.value === 'mine' ? mine(p) : !mine(p))))
 const ownerName = (p: Row) => (mine(p) ? 'Siz' : p.owner?.full_name || p.owner?.email || 'Eski üye')
 
@@ -41,12 +50,14 @@ async function create() {
 async function rename(p: Row) {
   const t = prompt('Yeni proje adı', p.title)
   if (!t?.trim()) return
-  await client.from('projects').update({ title: t.trim(), updated_at: new Date().toISOString() }).eq('id', p.id)
+  const { error: err } = await client.rpc('rename_project', { p_project: p.id, p_title: t.trim() })
+  if (err) { alert(err.message); return }
   refresh()
 }
 async function remove(p: Row) {
   if (!confirm(`“${p.title}” silinsin mi? Bu işlem geri alınamaz.`)) return
-  await client.from('projects').delete().eq('id', p.id)
+  const { error: err } = await client.from('projects').delete().eq('id', p.id)
+  if (err) { alert(err.message); return }
   refresh()
 }
 async function logout() { await client.auth.signOut(); navigateTo('/login') }
@@ -92,13 +103,14 @@ const fmt = (d: string) => new Date(d).toLocaleString('tr-TR', { dateStyle: 'med
         <NuxtLink :to="`/project/${p.id}`" class="min-w-0 flex-1">
           <div class="truncate font-medium">{{ p.title }}
             <span v-if="p.company_id" class="ml-2 rounded-full border border-slate-300 px-2 py-0.5 text-xs font-normal text-slate-500">Firma</span>
-            <span v-if="!canEdit(p)" class="ml-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs font-normal text-slate-500">Salt okunur</span>
+            <span v-if="editing[p.id]" class="ml-1 rounded-full border border-amber-500 px-2 py-0.5 text-xs font-normal text-amber-700"><Icon name="lucide:lock" class="align-[-2px]" /> {{ editing[p.id] }} düzenliyor</span>
+            <span v-else-if="!canEdit(p)" class="ml-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs font-normal text-slate-500">Salt okunur</span>
           </div>
           <div class="truncate text-sm text-slate-500">{{ p.description || 'Açıklama yok' }} · {{ ownerName(p) }} · {{ fmt(p.updated_at) }}</div>
         </NuxtLink>
-        <button v-if="canEdit(p)" class="btn" @click="rename(p)">Yeniden adlandır</button>
+        <button v-if="canEdit(p)" class="btn" :disabled="!!editing[p.id]" @click="rename(p)">Yeniden adlandır</button>
         <NuxtLink :to="`/project/${p.id}`" class="btn">Aç</NuxtLink>
-        <button v-if="canEdit(p)" class="btn" @click="remove(p)">Sil</button>
+        <button v-if="canDelete(p)" class="btn" @click="remove(p)">Sil</button>
       </li>
     </ul>
   </main>

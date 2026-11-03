@@ -7,11 +7,28 @@ const client = useSupabaseClient<any>()
 const user = useSupabaseUser()
 const co = useCompany()
 const sim = useSimulator()
+const projectId = route.params.id as string
 const ownerName = ref('')
 const title = ref('Yükleniyor…')
 const status = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 const ready = ref(false)
+const dirty = ref(false)
+/** Firma projesi: düzenlemek için kilit gerekir */
+const lockRequired = ref(false)
+/** Rol olarak düzenleyebilir mi (sahip veya aynı firma üyesi) */
+const canEdit = ref(false)
+/** Başkasının kilidini devralabilir mi (proje sahibi veya OWNER/ADMIN) */
+const canForce = ref(false)
+const busyBy = ref<string | null>(null)
+const hasUpdates = ref(false)
+let lastUpdated = ''
 let timer: ReturnType<typeof setTimeout>
+let pollTimer: ReturnType<typeof setInterval> | undefined
+
+const lock = useProjectLock(projectId, {
+  beforeRelease: () => save(),
+  onLost: () => { clearTimeout(timer); sim.readOnly = true; busyBy.value = lock.holder.value || null; startPoll() }
+})
 
 const tools: { id: Tool; label: string; icon: string }[] = [
   { id: 'select', label: 'Seç / Taşı', icon: 'lucide:mouse-pointer-2' },
@@ -24,35 +41,94 @@ const tools: { id: Tool; label: string; icon: string }[] = [
   { id: 'delete', label: 'Sil', icon: 'lucide:eraser' }
 ]
 
-onMounted(async () => {
-  if (!co.loaded.value) await co.refresh()
+/** Projeyi sunucudan (yeniden) yükle; yükleme otomatik kaydı tetiklemez */
+async function loadProject() {
   const { data, error } = await client.from('projects')
-    .select('title,grid_data,user_id,company_id,owner:profiles!user_id(full_name,email)')
-    .eq('id', route.params.id as string).single()
-  if (error || !data) { await navigateTo('/dashboard'); return }
+    .select('title,grid_data,user_id,company_id,updated_at,owner:profiles!user_id(full_name,email)')
+    .eq('id', projectId).single()
+  if (error || !data) return null
+  ready.value = false
   title.value = data.title
-  // Düzenleme: proje sahibi veya aynı firmanın OWNER/ADMIN'i (asıl denetim veritabanı RLS'inde)
-  const owner = data.user_id === user.value?.id
-  const admin = !!data.company_id && data.company_id === co.company.value?.id && co.isAdmin.value
-  sim.readOnly = !(owner || admin)
+  lastUpdated = data.updated_at
+  hasUpdates.value = false
+  dirty.value = false
   const o = data.owner as unknown as { full_name: string | null; email: string } | null
   ownerName.value = o?.full_name || o?.email || 'Eski üye'
   sim.load(data.grid_data)
   await nextTick()
   ready.value = true
+  return data
+}
+
+onMounted(async () => {
+  if (!co.loaded.value) await co.refresh()
+  sim.readOnly = true
+  const data = await loadProject()
+  if (!data) { await navigateTo('/dashboard'); return }
+  // Düzenleme: proje sahibi veya aynı firmanın herhangi bir üyesi, kilidi tutuyorsa (asıl denetim RLS'te)
+  const owner = data.user_id === user.value?.id
+  const sameCompany = !!data.company_id && data.company_id === co.company.value?.id
+  canEdit.value = owner || sameCompany
+  canForce.value = owner || (sameCompany && co.isAdmin.value)
+  lockRequired.value = canEdit.value && !!data.company_id
+  if (!canEdit.value) return
+  if (!lockRequired.value) { sim.readOnly = false; return }
+  if (await lock.acquire()) sim.readOnly = false
+  else { busyBy.value = lock.holder.value; startPoll() }
+  window.addEventListener('pagehide', onPageHide)
 })
 
+/** Salt okunur bekleyen kullanıcı: kilit boşaldı mı, proje değişti mi? */
+async function poll() {
+  const [h, p] = await Promise.all([lock.peek(), client.from('projects').select('updated_at').eq('id', projectId).single()])
+  busyBy.value = h
+  if (p.data && p.data.updated_at !== lastUpdated) hasUpdates.value = true
+}
+function startPoll() { stopPoll(); pollTimer = setInterval(poll, 15_000) }
+function stopPoll() { clearInterval(pollTimer); pollTimer = undefined }
+
+async function startEditing(force = false) {
+  if (force && !confirm(`${busyBy.value ?? 'Diğer kullanıcı'} şu an düzenliyor. Kilidi devralırsanız onun kaydedilmemiş son değişiklikleri kaybolabilir. Devam edilsin mi?`)) return
+  if (dirty.value && !confirm('Kaydedilmemiş değişiklikleriniz var; proje sunucudaki son hâliyle yeniden yüklenecek. Devam edilsin mi? (Saklamak için önce “Kopya oluştur”.)')) return
+  if (!(await lock.acquire(force))) { busyBy.value = lock.holder.value; return }
+  stopPoll()
+  busyBy.value = null
+  await loadProject()
+  sim.readOnly = false
+}
+
+function reloadLatest() {
+  if (dirty.value && !confirm('Kaydedilmemiş değişiklikleriniz kaybolacak. Devam edilsin mi?')) return
+  loadProject()
+}
+
 async function save() {
+  clearTimeout(timer)
+  if (!dirty.value || sim.readOnly) return
+  dirty.value = false
   status.value = 'saving'
-  const { error } = await client.from('projects')
-    .update({ grid_data: sim.serialized, updated_at: new Date().toISOString() }).eq('id', route.params.id as string)
-  status.value = error ? 'error' : 'saved'
+  const { data, error } = await client.from('projects')
+    .update({ grid_data: sim.serialized, updated_at: new Date().toISOString() }).eq('id', projectId).select('updated_at')
+  if (error) { dirty.value = true; status.value = 'error'; timer = setTimeout(save, 5000); return }
+  // RLS satırı güncellemediyse kilit elimizde değil
+  if (!data?.length) { dirty.value = true; status.value = 'error'; lock.lost(); return }
+  lastUpdated = data[0].updated_at
+  status.value = 'saved'
 }
 watch(() => sim.serialized, () => {
   if (!ready.value || sim.readOnly) return
+  dirty.value = true
   clearTimeout(timer); timer = setTimeout(save, 1500)
 }, { deep: true })
-onBeforeUnmount(() => { clearTimeout(timer); if (ready.value && !sim.readOnly && status.value === 'saving') save(); sim.readOnly = false })
+
+function onPageHide() { if (lock.state.value === 'held') { save(); client.rpc('release_project_lock', { p_project: projectId }) } }
+onBeforeUnmount(async () => {
+  clearTimeout(timer); stopPoll()
+  if (import.meta.client) window.removeEventListener('pagehide', onPageHide)
+  if (lock.state.value === 'held') await lock.release() // önce kaydeder
+  else await save()
+  sim.readOnly = false
+})
 
 /** Salt okunur projenin kendi kopyasını oluştur */
 async function duplicate() {
@@ -75,7 +151,7 @@ async function exportPdf() {
 }
 function loadExample() { if (!sim.nodes.length || confirm('Mevcut model örnek ağla değiştirilsin mi?')) sim.loadExample() }
 function clearAll() { if (confirm('Tüm düğüm ve borular silinsin mi?')) sim.clear() }
-const statusText = computed(() => ({ idle: '', saving: 'Kaydediliyor…', saved: 'Kaydedildi', error: 'Kaydedilemedi – tekrar denenecek' }[status.value]))
+const statusText = computed(() => ({ idle: '', saving: 'Kaydediliyor…', saved: 'Kaydedildi', error: lock.state.value === 'lost' ? 'Kaydedilemedi' : 'Kaydedilemedi – tekrar denenecek' }[status.value]))
 const r = computed(() => sim.result)
 const stats = computed(() => {
   const open = sim.nodes.filter((n) => (n.type === 'sprinkler' || n.type === 'hydrant') && n.open !== false)
@@ -92,6 +168,7 @@ const stats = computed(() => {
       <h1 class="brand truncate text-xl">{{ title }}</h1>
       <span class="text-xs text-slate-500" :class="status === 'error' && 'text-red-600'" aria-live="polite">{{ statusText }}</span>
       <span v-if="sim.readOnly" class="rounded-full border border-slate-300 px-2.5 py-0.5 text-xs">Salt okunur · {{ ownerName }}</span>
+      <span v-else-if="lock.state.value === 'held'" class="rounded-full border border-green-600 px-2.5 py-0.5 text-xs text-green-700" title="Siz düzenlerken diğer firma üyeleri projeyi salt okunur görür"><Icon name="lucide:lock" class="align-[-2px]" /> Düzenliyorsunuz</span>
       <button v-if="sim.readOnly" class="btn" @click="duplicate"><Icon name="lucide:copy" />Kopya oluştur</button>
       <div class="ml-4 flex flex-wrap gap-1">
         <button v-for="t in tools" :key="t.id" class="btn" :class="sim.tool === t.id && 'btn-active'" :title="t.label" :aria-label="t.label" :aria-pressed="sim.tool === t.id" :disabled="sim.readOnly && t.id !== 'select'" @click="sim.tool = t.id">
@@ -107,6 +184,22 @@ const stats = computed(() => {
         <button class="btn" :disabled="sim.readOnly" @click="clearAll"><Icon name="lucide:trash-2" />Tuvali temizle</button>
       </div>
     </header>
+
+    <div v-if="sim.readOnly && lockRequired" class="flex flex-wrap items-center gap-2 border-b border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900" role="status">
+      <Icon name="lucide:lock" />
+      <template v-if="lock.state.value === 'lost'">
+        Düzenleme kilidi {{ busyBy ? `${busyBy} tarafından` : '' }} alındı; proje artık salt okunur.
+        <b v-if="dirty">Kaydedilmemiş değişiklikleriniz var — saklamak için “Kopya oluştur”.</b>
+      </template>
+      <template v-else-if="lock.state.value === 'idle'">Uzun süre işlem yapılmadığı için düzenleme kilidi bırakıldı.</template>
+      <template v-if="busyBy && lock.state.value !== 'lost'"><b>{{ busyBy }}</b> şu an düzenliyor; siz salt okunur görüntülüyorsunuz.</template>
+      <template v-else-if="!busyBy">Proje şu an kimse tarafından düzenlenmiyor.</template>
+      <span class="ml-auto flex gap-1">
+        <button v-if="hasUpdates" class="btn" @click="reloadLatest"><Icon name="lucide:refresh-cw" />Yeni değişiklikleri yükle</button>
+        <button v-if="!busyBy" class="btn btn-primary" @click="startEditing()"><Icon name="lucide:pencil" />Düzenlemeye başla</button>
+        <button v-else-if="canForce" class="btn" @click="startEditing(true)"><Icon name="lucide:key-round" />Kilidi devral</button>
+      </span>
+    </div>
 
     <div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_320px] lg:grid-rows-[1fr_240px]">
       <div class="relative min-h-[300px] border-r border-slate-200"><HydraulicCanvas /></div>

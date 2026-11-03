@@ -5,6 +5,7 @@
 --  * Bir kullanıcı en fazla bir firmaya üyedir. Roller: OWNER, ADMIN, MEMBER.
 --  * Aynı firmadaki kullanıcılar birbirinin profilini (ad, e-posta, rol) görür.
 --  * Firma projelerini tüm üyeler GÖRÜR; düzenleme/silme yalnızca proje sahibi ile OWNER/ADMIN'de.
+--    (003_project_locks.sql düzenlemeyi kilitle tüm üyelere açar.)
 --  * Firma dışındakiler hiçbir şey göremez.
 --  * Firmaya katılım yalnızca e-posta davetiyle (accept_invite), firma oluşturma create_company ile.
 --  Davetlerin güvenli olması için Supabase Auth'ta "Confirm email" AÇIK olmalıdır.
