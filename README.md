@@ -25,9 +25,15 @@ Plan 1 kare = 1 m; her düğümün kotu (z, m) var. Toplam yük H = P + z·0.098
 - Açık/koyu tema: başlıktaki güneş/ay düğmesi; tercih tarayıcıda saklanır (varsayılan koyu).
 
 ## Firmalar (çok kiracılı)
-1. `supabase/schema.sql` → ardından sırayla `supabase/migrations/002_companies.sql` ve `003_project_locks.sql` dosyalarını SQL Editor'de çalıştırın.
+1. `supabase/schema.sql` → ardından sırayla `supabase/migrations/002_companies.sql` `003_project_locks.sql`, `004_revoke_trigger_fn_execute.sql` ve `005_project_versions.sql` dosyalarını SQL Editor'de çalıştırın.
 2. Supabase Auth ayarlarında **Confirm email açık kalmalı** (davetler yalnızca doğrulanmış e-postaya uygulanır).
 3. Roller: **OWNER** (her şey, rol/sahiplik), **ADMIN** (üye davet/çıkarma, firma projelerini düzenleme), **MEMBER**.
 4. Firma üyeleri birbirinin profilini ve firma projelerini görür. Silme yalnızca proje sahibi ile OWNER/ADMIN'dedir.
 5. **Proje kilidi** (`supabase/migrations/003_project_locks.sql`): firma projesini her üye düzenleyebilir, ama aynı anda yalnızca bir kişi. Projeyi açan kilidi alır (90 sn geçerli, açıkken 30 sn'de bir yenilenir; 10 dk hareketsizlikte bırakılır). Diğerleri salt okunur görür, kilit boşalınca “Düzenlemeye başla” ile devam eder; proje sahibi ve OWNER/ADMIN “Kilidi devral” diyebilir. Kilidini kaybeden kullanıcı kaydedilmemiş çalışmasını “Kopya oluştur” ile saklayabilir.
 6. Tüm kurallar veritabanında RLS + SECURITY DEFINER fonksiyonlarla uygulanır; arayüz yalnızca yansıtır.
+
+## Sürüm geçmişi, geri alma ve kısayollar
+- **Sürüm geçmişi** (`005_project_versions.sql`, başlıktaki “Geçmiş”): her kayıtta veritabanı tetikleyicisi sürüm tutar. Aynı kişinin 10 dk içindeki düzenlemeleri tek sürümde birleşir, yalnızca yakınlaştırma/kaydırma sürüm oluşturmaz. Son 100 otomatik sürüm saklanır; “adlandırarak kaydet” ile oluşturulanlar silinmez. “Geri dön” şimdiki hâli de geçmişte bırakır (firma projesinde kilit gerekir).
+- **Geri al / yinele**: Ctrl+Z, Ctrl+Y (veya Ctrl+Shift+Z); son 100 adım, oturum içinde. Sürüklemeler tek adım sayılır.
+- **Araç kısayolları**: 1 Seç · 2 Boru · 3 Su kaynağı · 4 Pompa · 5 Bağlantı · 6 Sprinkler · 7 Hidrant · 8 Sil · Esc: çizimi bitir · Del: seçiliyi sil.
+- **Etiketler**: çakışan etiketler önceliğe göre gizlenir (ad > basınç > debi > boru); yakınlaştırdıkça görünür. Seçili öğenin etiketleri her zaman gösterilir.

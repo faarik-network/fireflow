@@ -4,6 +4,19 @@ import { defaultDesign, evaluateDesign, autoDesignArea } from '~/utils/nfpa'
 import { DEFAULT_PUMP } from '~/utils/hydraulicSolver'
 
 const uid = () => crypto.randomUUID()
+
+/** Araç çubuğu sırası; 1–8 klavye kısayolları bu sırayı izler */
+export const TOOLS: { id: Tool; label: string; icon: string }[] = [
+  { id: 'select', label: 'Seç / Taşı', icon: 'lucide:mouse-pointer-2' },
+  { id: 'pipe', label: 'Boru çiz', icon: 'lucide:git-commit-horizontal' },
+  { id: 'source', label: 'Su kaynağı / Depo', icon: 'lucide:droplets' },
+  { id: 'pump', label: 'Pompa', icon: 'lucide:fan' },
+  { id: 'joint', label: 'Bağlantı düğümü', icon: 'lucide:circle-dot' },
+  { id: 'sprinkler', label: 'Sprinkler', icon: 'lucide:sprout' },
+  { id: 'hydrant', label: 'Hidrant', icon: 'lucide:flame' },
+  { id: 'delete', label: 'Sil', icon: 'lucide:eraser' }
+]
+const HISTORY_MAX = 100
 export const GRID = 20
 const PREFIX: Record<NodeType, string> = { source: 'K', joint: 'B', sprinkler: 'S', hydrant: 'H' }
 function nextName(prefix: string, names: (string | undefined)[]) {
@@ -30,6 +43,69 @@ export const useSimulator = defineStore('simulator', () => {
   const design = ref<DesignSettings>(defaultDesign())
 
   const result = computed<SolveResult>(() => solveNetwork(nodes.value, pipes.value))
+  // ---------- Geri al / yinele (yalnızca model: düğüm, boru, tasarım; görünüm hariç) ----------
+  const past: string[] = []
+  const future: string[] = []
+  let present = ''
+  let applying = false
+  let histTimer: ReturnType<typeof setTimeout> | undefined
+  const canUndo = ref(false)
+  const canRedo = ref(false)
+  const snapshot = () => JSON.stringify({ nodes: nodes.value, pipes: pipes.value, design: design.value })
+  const syncHist = () => { canUndo.value = past.length > 0; canRedo.value = future.length > 0 }
+  /** Arka arkaya gelen küçük değişiklikleri (ör. sürükleme) tek adımda topla */
+  function commitHistory() {
+    clearTimeout(histTimer)
+    const s = snapshot()
+    if (s === present) return
+    past.push(present)
+    if (past.length > HISTORY_MAX) past.shift()
+    present = s
+    future.length = 0
+    syncHist()
+  }
+  /** Geçmişe yazmadan modeli değiştir (yükleme, geri alma) */
+  function silently(fn: () => void) {
+    applying = true
+    fn()
+    nextTick(() => { applying = false })
+  }
+  function resetHistory() {
+    clearTimeout(histTimer)
+    past.length = 0; future.length = 0
+    present = snapshot()
+    syncHist()
+  }
+  function applySnapshot(s: string) {
+    const d = JSON.parse(s) as { nodes: HNode[]; pipes: HPipe[]; design: DesignSettings }
+    silently(() => { nodes.value = d.nodes; pipes.value = d.pipes; design.value = d.design })
+    present = s
+    const sel = selected.value
+    if (sel && !(sel.kind === 'node' ? nodes.value : pipes.value).some((x) => x.id === sel.id)) selected.value = null
+    syncHist()
+  }
+  function undo() {
+    if (readOnly.value) return
+    commitHistory()
+    const s = past.pop()
+    if (s === undefined) return
+    future.push(present)
+    applySnapshot(s)
+  }
+  function redo() {
+    if (readOnly.value) return
+    commitHistory()
+    const s = future.pop()
+    if (s === undefined) return
+    past.push(present)
+    applySnapshot(s)
+  }
+  watch([nodes, pipes, design], () => {
+    if (applying) return
+    clearTimeout(histTimer)
+    histTimer = setTimeout(commitHistory, 300)
+  }, { deep: true })
+
   const designEval = computed(() => (design.value.hazard === 'off' ? null : evaluateDesign(nodes.value, result.value, design.value)))
 
   const snapPt = (x: number, y: number) =>
@@ -124,11 +200,14 @@ export const useSimulator = defineStore('simulator', () => {
   }))
 
   function load(data: Partial<GridData> | null | undefined) {
-    nodes.value = data?.nodes ?? []
-    pipes.value = data?.pipes ?? []
-    view.value = data?.view ?? { zoom: 1, panX: 0, panY: 0 }
-    ensureNames()
-    design.value = data?.design ? { ...defaultDesign(), ...data.design } : defaultDesign()
+    silently(() => {
+      nodes.value = data?.nodes ?? []
+      pipes.value = data?.pipes ?? []
+      view.value = data?.view ?? { zoom: 1, panX: 0, panY: 0 }
+      ensureNames()
+      design.value = data?.design ? { ...defaultDesign(), ...data.design } : defaultDesign()
+    })
+    resetHistory()
     selected.value = null
     tool.value = 'select'
     if (nodes.value.length) fitView()
@@ -137,6 +216,7 @@ export const useSimulator = defineStore('simulator', () => {
   return {
     nodes, pipes, tool, selected, snap, view, defaults, fitRequest, showLabels, readOnly, design, designEval, openDesignArea, result,
     selectedNode, selectedPipe, serialized,
-    snapPt, addNode, addPipe, removeNode, removePipe, clear, fitView, load, loadExample
+    snapPt, addNode, addPipe, removeNode, removePipe, clear, fitView, load, loadExample,
+    canUndo, canRedo, undo, redo
   }
 })

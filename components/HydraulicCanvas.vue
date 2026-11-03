@@ -19,6 +19,7 @@ const PAL = {
 const { theme } = useTheme()
 let COL: typeof PAL.dark = { ...PAL.dark }
 const NODE_R = 9
+const LABEL_R = 12
 
 const toWorld = (sx: number, sy: number) => ({ x: (sx - sim.view.panX) / sim.view.zoom, y: (sy - sim.view.panY) / sim.view.zoom })
 const rel = (e: PointerEvent | WheelEvent) => {
@@ -107,7 +108,20 @@ function onWheel(e: WheelEvent) {
   sim.view.panY = s.y - before.y * z
 }
 function onKey(e: KeyboardEvent) {
-  if ((e.target as HTMLElement)?.matches?.('input, select, textarea')) return
+  if ((e.target as HTMLElement)?.closest?.('input, select, textarea, [contenteditable="true"]')) return
+  if (e.ctrlKey || e.metaKey) {
+    const k = e.key.toLowerCase()
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); pipeStart.value = null; sim.undo() }
+    else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); pipeStart.value = null; sim.redo() }
+    return
+  }
+  if (e.altKey) return
+  // 1–8: araç seçimi (araç çubuğundaki sırayla)
+  if (/^[1-9]$/.test(e.key)) {
+    const t = TOOLS[Number(e.key) - 1]
+    if (t && (!sim.readOnly || t.id === 'select')) { e.preventDefault(); sim.tool = t.id }
+    return
+  }
   if (e.key === 'Escape') { pipeStart.value = null; sim.tool = 'select' }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sim.selected) {
     sim.selected.kind === 'node' ? sim.removeNode(sim.selected.id) : sim.removePipe(sim.selected.id)
@@ -149,13 +163,23 @@ function draw(ts = performance.now()) {
 
   const byId = new Map(sim.nodes.map((n) => [n.id, n]))
   const res = sim.result
+  queue = []
+  const obstacles: Box[] = []
+  const selId = sim.selected?.id
+  // Etiket ölçüleri dünya biriminde; yazı ekranda sabit boyutlu olduğundan boşluklar da ekran pikseline göre
+  const fs = 11 / Math.max(zoom, 0.7), gap = 3 / zoom, line = fs * 1.25
 
   // borular
   for (const p of sim.pipes) {
     const a = byId.get(p.from), b = byId.get(p.to)
     if (!a || !b) continue
     const r = res.pipes[p.id]
-    if (p.kind === 'pump') { drawPump(a, b, r, sim.selected?.id === p.id); continue }
+    if (p.kind === 'pump') {
+      drawPump(a, b, r, selId === p.id, p.id)
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
+      obstacles.push([mx - LABEL_R, my - LABEL_R, mx + LABEL_R, my + LABEL_R, p.id])
+      continue
+    }
     const color = !r || !res.nodes[a.id]?.reachable || Math.abs(r.flow) < 0.5 ? COL.idle : r.status === 'danger' ? COL.fire : r.status === 'warn' ? COL.warn : COL.ok
     const isSel = sim.selected?.kind === 'pipe' && sim.selected.id === p.id
     ctx.strokeStyle = isSel ? COL.sel : color
@@ -174,7 +198,15 @@ function draw(ts = performance.now()) {
     }
     if (r && zoom > 0.5 && sim.showLabels && Math.abs(r.flow) > 0.5) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
-      label(`${Math.abs(r.flow).toFixed(0)} L/dk · DN${p.dn}`, mx, my - 10, color, zoom)
+      // Etiketi çizginin yanına koy: yatay boruda üste, dikey boruda sağa
+      const half = ((2 + p.dn / 40) * (isSel ? 1.4 : 1)) / 2 + gap
+      // Çapraz boruda yazıyı çizginin uzaklaştığı tarafa yasla ki çizgi yazının içinden geçmesin
+      const dx = b.x - a.x, dy = b.y - a.y, th = fs * 0.6
+      const t = `${Math.abs(r.flow).toFixed(0)} L/dk · DN${p.dn}`
+      const pr = isSel ? PRIO.selected : PRIO.pipe
+      if (Math.abs(dy) > Math.abs(dx)) label(t, mx + half + th * Math.abs(dx / dy), my, color, zoom, pr, p.id, 'left')
+      else if (Math.abs(dy) < 1) label(t, mx, my - half - th, color, zoom, pr, p.id)
+      else label(t, mx, my - half - th, color, zoom, pr, p.id, dy / dx > 0 ? 'left' : 'right')
     }
   }
   // çizim önizleme
@@ -191,20 +223,26 @@ function draw(ts = performance.now()) {
     const isSel = sim.selected?.kind === 'node' && sim.selected.id === n.id
     const r = res.nodes[n.id]
     drawNode(n, isSel, r?.reachable !== false)
+    const R = NODE_R + 2
+    obstacles.push([n.x - R, n.y - R, n.x + R, n.y + R, n.id])
+    const pr = (base: number) => (isSel ? PRIO.selected : base)
     if (r && zoom > 0.4 && sim.showLabels) {
       const t = n.type === 'source' ? (n.supply ? `${r.pressure.toFixed(2)} bar (statik ${(n.pressure ?? 0).toFixed(1)})` : `${(n.pressure ?? 0).toFixed(1)} bar`) : r.reachable ? `${r.pressure.toFixed(2)} bar` : 'bağlı değil'
       const zt = n.z ? ` · ${n.z > 0 ? '+' : ''}${n.z} m` : ''
-      label(t + (r.reachable ? zt : ''), n.x, n.y + NODE_R + 12, r.reachable ? COL.ink : COL.off, zoom)
+      // LABEL_R: pompa simgesi (r=11) düğümlerden büyük; etiketler ikisini de aşacak kadar uzakta başlar
+      const below = n.y + LABEL_R + gap + fs * 0.6, above = n.y - LABEL_R - gap - fs * 0.6
+      label(t + (r.reachable ? zt : ''), n.x, below, r.reachable ? COL.ink : COL.off, zoom, pr(PRIO.pressure), n.id)
       const showFlow = (n.type === 'sprinkler' || n.type === 'hydrant') && n.open !== false
-      if (showFlow) label(`${r.flow.toFixed(0)} L/dk`, n.x, n.y - NODE_R - 6, COL.steel, zoom)
-      if (n.name) label(n.name, n.x, n.y - NODE_R - (showFlow ? 19 : 7), COL.name, zoom)
+      if (showFlow) label(`${r.flow.toFixed(0)} L/dk`, n.x, above, COL.steel, zoom, pr(PRIO.flow), n.id)
+      if (n.name) label(n.name, n.x, showFlow ? above - line : above, COL.name, zoom, pr(PRIO.name), n.id)
     }
   }
+  flushLabels(zoom, obstacles, [x0, y0, x1, y1])
   ctx.restore()
   if (animating) raf = requestAnimationFrame(draw)
 }
 
-function drawPump(a: HNode, b: HNode, r: { flow: number; lossBar: number } | undefined, sel: boolean) {
+function drawPump(a: HNode, b: HNode, r: { flow: number; lossBar: number } | undefined, sel: boolean, id: string) {
   const c = ctx!
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
   c.strokeStyle = sel ? COL.sel : COL.pump; c.lineWidth = 5; c.lineCap = 'round'
@@ -217,7 +255,8 @@ function drawPump(a: HNode, b: HNode, r: { flow: number; lossBar: number } | und
   c.lineTo(mx + Math.cos(ang - 2.5) * 12, my + Math.sin(ang - 2.5) * 12); c.closePath(); c.fill()
   c.beginPath(); c.arc(mx, my, 11, 0, Math.PI * 2); c.fillStyle = COL.bg; c.fill(); c.lineWidth = 2.5; c.stroke()
   c.fillStyle = COL.pump; c.font = 'bold 12px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('P', mx, my + 0.5)
-  if (r && sim.view.zoom > 0.4) label(`+${(-r.lossBar).toFixed(2)} bar · ${r.flow.toFixed(0)} L/dk`, mx, my - 22, COL.pump, sim.view.zoom)
+  const z = sim.view.zoom, fs = 11 / Math.max(z, 0.7)
+  if (r && z > 0.4) label(`${-r.lossBar >= 0 ? '+' : '−'}${Math.abs(r.lossBar).toFixed(2)} bar · ${r.flow.toFixed(0)} L/dk`, mx, my - LABEL_R - 3 / z - fs * 0.6, COL.pump, z, sel ? PRIO.selected : PRIO.pump, id)
 }
 function drawNode(n: HNode, sel: boolean, ok: boolean) {
   const c = ctx!
@@ -240,12 +279,57 @@ function drawNode(n: HNode, sel: boolean, ok: boolean) {
     c.arc(n.x, n.y, 5, 0, Math.PI * 2); c.fillStyle = COL.bg; c.fill(); c.stroke()
   }
 }
-function label(t: string, x: number, y: number, color: string, zoom: number) {
+// ---------- Etiket yerleşimi ----------
+// Etiketler hemen çizilmez; önceliğe göre sıralanır, başka bir etiketle veya simgeyle çakışan atlanır.
+// Yakınlaştırdıkça yer açılır ve gizlenen etiketler görünür. Seçili öğenin etiketleri her zaman çizilir.
+interface Lbl { t: string; x: number; y: number; color: string; prio: number; owner?: string; align: CanvasTextAlign }
+/** [x0, y0, x1, y1, sahip öğe] — aynı öğenin etiketleri/simgesi birbirini engellemez */
+type Box = [number, number, number, number, string?]
+let queue: Lbl[] = []
+const widthCache = new Map<string, number>()
+// Pompa basma yüksekliği en kritik bilgi: düğüm adlarından önce yerleşir
+const PRIO = { selected: 0, pump: 1, name: 2, pressure: 2, flow: 3, pipe: 4 } as const
+
+function label(t: string, x: number, y: number, color: string, _zoom: number, prio: number = PRIO.flow, owner?: string, align: 'center' | 'left' | 'right' = 'center') {
+  queue.push({ t, x, y, color, prio, owner, align })
+}
+function flushLabels(zoom: number, obstacles: Box[], view: [number, number, number, number]) {
   const c = ctx!
-  c.font = `${11 / Math.max(zoom, 0.7)}px ui-sans-serif, system-ui, sans-serif`
-  c.textAlign = 'center'; c.textBaseline = 'middle'
-  c.lineWidth = 3 / zoom; c.strokeStyle = COL.halo; c.strokeText(t, x, y)
-  c.fillStyle = color; c.fillText(t, x, y)
+  const fs = 11 / Math.max(zoom, 0.7)
+  const font = `${fs}px ui-sans-serif, system-ui, sans-serif`
+  c.font = font; c.textAlign = 'center'; c.textBaseline = 'middle'
+  if (widthCache.size > 5000) widthCache.clear()
+  // Basit ızgara tabanlı çakışma kontrolü
+  const cell = Math.max(fs * 8, 1)
+  const buckets = new Map<string, Box[]>()
+  const keys = (b: Box) => {
+    const out: string[] = []
+    for (let i = Math.floor(b[0] / cell); i <= Math.floor(b[2] / cell); i++)
+      for (let j = Math.floor(b[1] / cell); j <= Math.floor(b[3] / cell); j++) out.push(`${i},${j}`)
+    return out
+  }
+  const hits = (b: Box) => keys(b).some((k) => buckets.get(k)?.some((o) => (b[4] === undefined || o[4] !== b[4]) && b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]))
+  const place = (b: Box) => { for (const k of keys(b)) (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(b) }
+  for (const o of obstacles) place(o)
+
+  queue.sort((a, b) => a.prio - b.prio)
+  const padX = 2 / zoom, padY = 1 / zoom
+  for (const l of queue) {
+    const key = `${fs}|${l.t}`
+    let tw = widthCache.get(key)
+    if (tw === undefined) { tw = c.measureText(l.t).width; widthCache.set(key, tw) }
+    const left = l.align === 'left' ? l.x : l.align === 'right' ? l.x - tw : l.x - tw / 2
+    const b: Box = [left - padX, l.y - fs * 0.6 - padY, left + tw + padX, l.y + fs * 0.6 + padY, l.owner]
+    if (b[2] < view[0] || b[0] > view[2] || b[3] < view[1] || b[1] > view[3]) continue
+    if (l.prio > PRIO.selected && hits(b)) continue
+    place(b)
+    // Zemin: altından geçen boru çizgisi yazıyı bozmasın
+    c.fillStyle = COL.halo
+    c.fillRect(b[0], b[1], b[2] - b[0], b[3] - b[1])
+    c.textAlign = l.align
+    c.fillStyle = l.color; c.fillText(l.t, l.x, l.y)
+  }
+  queue = []
 }
 
 const schedule = () => { if (!raf) raf = requestAnimationFrame(draw) }
@@ -287,12 +371,15 @@ const cursor = computed(() => (sim.tool === 'select' ? 'default' : sim.tool === 
       @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointerleave="mouse = null"
       @wheel="onWheel" @dblclick="onDbl" @contextmenu.prevent
     />
-    <div class="pointer-events-none absolute bottom-2 left-2 rounded bg-white/90 px-2 py-1 text-xs text-slate-600">
-      <span v-if="sim.tool === 'pipe' || sim.tool === 'pump'">{{ sim.tool === 'pump' ? 'Pompa: emme düğümünden basma düğümüne tıklayın (yön önemli)' : 'Boru: düğümlere tıklayın' }} · Esc ile bitir</span>
-      <span v-else>Çift tık: sprinkler/hidrant aç-kapat · Tekerlek: yakınlaştır · Sağ tuş sürükle: kaydır · Del: sil</span>
-    </div>
-    <div class="pointer-events-none absolute bottom-2 right-2 flex gap-3 rounded bg-white/90 px-2 py-1 text-xs">
-      <span style="color:#2FBF71">● &lt; 4 m/s</span><span style="color:#F2A33A">● 4–6 m/s</span><span style="color:#FF5A36">● &gt; 6 m/s</span><span style="color:#64748B">● akış yok</span>
+    <div class="pointer-events-none absolute inset-x-2 bottom-2 flex flex-wrap items-end justify-between gap-2 text-xs">
+      <div class="min-w-0 max-w-full rounded bg-white/90 px-2 py-1 text-slate-600">
+        <span v-if="sim.tool === 'pipe' || sim.tool === 'pump'">{{ sim.tool === 'pump' ? 'Pompa: emme düğümünden basma düğümüne tıklayın (yön önemli)' : 'Boru: düğümlere tıklayın' }} · Esc ile bitir</span>
+        <span v-else-if="sim.tool !== 'select'"><b>{{ TOOLS.find((t) => t.id === sim.tool)?.label }}</b> · tuvale tıklayın · Esc: Seç aracına dön</span>
+        <span v-else>Çift tık: aç-kapat · Tekerlek: yakınlaştır · Sağ tuş: kaydır · Del: sil · 1–8: araçlar · Ctrl+Z / Ctrl+Y: geri al / yinele</span>
+      </div>
+      <div class="flex shrink-0 gap-3 rounded bg-white/90 px-2 py-1">
+        <span style="color:#2FBF71">● &lt; 4 m/s</span><span style="color:#F2A33A">● 4–6 m/s</span><span style="color:#FF5A36">● &gt; 6 m/s</span><span style="color:#64748B">● akış yok</span>
+      </div>
     </div>
   </div>
 </template>

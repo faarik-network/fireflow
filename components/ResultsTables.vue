@@ -26,7 +26,7 @@ const pick = (kind: 'node' | 'pipe', id: string) => (sim.selected = { kind, id }
             <td class="px-2 py-1 font-mono text-xs font-semibold">{{ p.name ?? sh(p.id) }}</td>
             <template v-if="r.kind === 'pump'">
               <td colspan="3" class="font-medium text-blue-700">Pompa</td><td>{{ r.flow.toFixed(0) }}</td><td>—</td>
-              <td class="font-medium text-blue-700">+{{ (-r.lossBar).toFixed(2) }}</td>
+              <td class="font-medium text-blue-700">{{ -r.lossBar >= 0 ? '+' : '−' }}{{ Math.abs(r.lossBar).toFixed(2) }}</td>
             </template>
             <template v-else>
               <td>{{ p.dn }}</td><td>{{ p.c }}</td><td>{{ r.length.toFixed(1) }}</td><td>{{ Math.abs(r.flow).toFixed(0) }}</td>

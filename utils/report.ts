@@ -15,7 +15,7 @@ function rows(nodes: HNode[], pipes: HPipe[], res: SolveResult) {
       from: nm(byId.get(p.from) ?? { id: p.from }), to: nm(byId.get(p.to) ?? { id: p.to }),
       dn: r.kind === 'pump' ? '' : `DN${p.dn}`, c: r.kind === 'pump' ? '' : String(p.c),
       len: r.kind === 'pump' ? '' : tr(r.length, 1), q: tr(Math.abs(r.flow), 0),
-      v: r.kind === 'pump' ? '' : tr(r.velocity), dp: r.kind === 'pump' ? '+' + tr(-r.lossBar, 3) : '-' + tr(r.lossBar, 3),
+      v: r.kind === 'pump' ? '' : tr(r.velocity), dp: r.kind === 'pump' ? (r.lossBar <= 0 ? '+' : '-') + tr(Math.abs(r.lossBar), 3) : '-' + tr(r.lossBar, 3),
       status: r.kind === 'pump' ? '' : r.status === 'danger' ? '> 6 m/s' : r.status === 'warn' ? '4–6 m/s' : 'Uygun'
     }
   })

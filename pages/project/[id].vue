@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { Tool } from '~/types/hydraulic'
 definePageMeta({ middleware: 'auth' })
 
 const route = useRoute()
@@ -30,16 +29,8 @@ const lock = useProjectLock(projectId, {
   onLost: () => { clearTimeout(timer); sim.readOnly = true; busyBy.value = lock.holder.value || null; startPoll() }
 })
 
-const tools: { id: Tool; label: string; icon: string }[] = [
-  { id: 'select', label: 'Seç / Taşı', icon: 'lucide:mouse-pointer-2' },
-  { id: 'pipe', label: 'Boru çiz', icon: 'lucide:git-commit-horizontal' },
-  { id: 'source', label: 'Su kaynağı / Depo', icon: 'lucide:droplets' },
-  { id: 'pump', label: 'Pompa', icon: 'lucide:fan' },
-  { id: 'joint', label: 'Bağlantı düğümü', icon: 'lucide:circle-dot' },
-  { id: 'sprinkler', label: 'Sprinkler', icon: 'lucide:sprout' },
-  { id: 'hydrant', label: 'Hidrant', icon: 'lucide:flame' },
-  { id: 'delete', label: 'Sil', icon: 'lucide:eraser' }
-]
+const showHistory = ref(false)
+const history = ref<{ load: () => Promise<void> } | null>(null)
 
 /** Projeyi sunucudan (yeniden) yükle; yükleme otomatik kaydı tetiklemez */
 async function loadProject() {
@@ -114,12 +105,31 @@ async function save() {
   if (!data?.length) { dirty.value = true; status.value = 'error'; lock.lost(); return }
   lastUpdated = data[0].updated_at
   status.value = 'saved'
+  if (showHistory.value) history.value?.load()
 }
 watch(() => sim.serialized, () => {
   if (!ready.value || sim.readOnly) return
   dirty.value = true
   clearTimeout(timer); timer = setTimeout(save, 1500)
 }, { deep: true })
+
+/** Sürüme dön: önce bekleyen değişiklikleri kaydet; şimdiki hâl de geçmişte kalır */
+async function restoreVersion(id: string) {
+  if (!confirm('Proje bu sürüme döndürülsün mü? Şimdiki hâl de geçmişte saklanır; istediğinizde ona geri dönebilirsiniz.')) return false
+  await save()
+  if (dirty.value) { alert('Son değişiklikler kaydedilemedi; geri dönme iptal edildi.'); return false }
+  const { error } = await client.rpc('restore_project_version', { p_version: id })
+  if (error) { alert(error.message); return false }
+  await loadProject()
+  return true
+}
+async function saveNamedVersion(label: string) {
+  await save()
+  if (dirty.value) { alert('Son değişiklikler kaydedilemedi; sürüm oluşturulmadı.'); return false }
+  const { error } = await client.rpc('save_project_version', { p_project: projectId, p_label: label })
+  if (error) { alert(error.message); return false }
+  return true
+}
 
 function onPageHide() { if (lock.state.value === 'held') { save(); client.rpc('release_project_lock', { p_project: projectId }) } }
 onBeforeUnmount(async () => {
@@ -149,8 +159,8 @@ async function exportPdf() {
   const img = document.querySelector('canvas')?.toDataURL('image/png') ?? ''
   if (!printHtml(buildReportHtml(title.value, sim.nodes, sim.pipes, sim.result, img, { s: sim.design, ev: sim.designEval }))) alert('Açılır pencere engellendi. Tarayıcıda bu site için izin verin.')
 }
-function loadExample() { if (!sim.nodes.length || confirm('Mevcut model örnek ağla değiştirilsin mi?')) sim.loadExample() }
-function clearAll() { if (confirm('Tüm düğüm ve borular silinsin mi?')) sim.clear() }
+function loadExample() { if (!sim.nodes.length || confirm('Mevcut model örnek ağla değiştirilsin mi? (Ctrl+Z ile geri alınabilir)')) sim.loadExample() }
+function clearAll() { if (confirm('Tüm düğüm ve borular silinsin mi? (Ctrl+Z ile geri alınabilir)')) sim.clear() }
 const statusText = computed(() => ({ idle: '', saving: 'Kaydediliyor…', saved: 'Kaydedildi', error: lock.state.value === 'lost' ? 'Kaydedilemedi' : 'Kaydedilemedi – tekrar denenecek' }[status.value]))
 const r = computed(() => sim.result)
 const stats = computed(() => {
@@ -165,23 +175,28 @@ const stats = computed(() => {
   <div class="flex h-screen flex-col">
     <header class="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
       <NuxtLink to="/dashboard" class="btn" aria-label="Projelere dön"><Icon name="lucide:arrow-left" /></NuxtLink>
-      <h1 class="brand truncate text-xl">{{ title }}</h1>
-      <span class="text-xs text-slate-500" :class="status === 'error' && 'text-red-600'" aria-live="polite">{{ statusText }}</span>
-      <span v-if="sim.readOnly" class="rounded-full border border-slate-300 px-2.5 py-0.5 text-xs">Salt okunur · {{ ownerName }}</span>
-      <span v-else-if="lock.state.value === 'held'" class="rounded-full border border-green-600 px-2.5 py-0.5 text-xs text-green-700" title="Siz düzenlerken diğer firma üyeleri projeyi salt okunur görür"><Icon name="lucide:lock" class="align-[-2px]" /> Düzenliyorsunuz</span>
-      <button v-if="sim.readOnly" class="btn" @click="duplicate"><Icon name="lucide:copy" />Kopya oluştur</button>
-      <div class="ml-4 flex flex-wrap gap-1">
-        <button v-for="t in tools" :key="t.id" class="btn" :class="sim.tool === t.id && 'btn-active'" :title="t.label" :aria-label="t.label" :aria-pressed="sim.tool === t.id" :disabled="sim.readOnly && t.id !== 'select'" @click="sim.tool = t.id">
-          <Icon :name="t.icon" /><span class="hidden xl:inline">{{ t.label }}</span>
+      <h1 class="brand min-w-0 truncate text-xl" :title="title">{{ title }}</h1>
+      <span class="shrink-0 whitespace-nowrap text-xs text-slate-500" :class="status === 'error' && 'text-red-600'" aria-live="polite">{{ statusText }}</span>
+      <span v-if="sim.readOnly" class="shrink-0 whitespace-nowrap rounded-full border border-slate-300 px-2.5 py-0.5 text-xs">Salt okunur · {{ ownerName }}</span>
+      <span v-else-if="lock.state.value === 'held'" class="shrink-0 whitespace-nowrap rounded-full border border-green-600 px-2.5 py-0.5 text-xs text-green-700" title="Siz düzenlerken diğer firma üyeleri projeyi salt okunur görür"><Icon name="lucide:lock" class="align-[-2px]" /> Düzenliyorsunuz</span>
+      <button v-if="sim.readOnly" class="btn shrink-0" @click="duplicate"><Icon name="lucide:copy" />Kopya oluştur</button>
+      <div class="ml-auto flex shrink-0 flex-wrap justify-end gap-1">
+        <button v-for="(t, i) in TOOLS" :key="t.id" class="btn relative px-2.5" :class="sim.tool === t.id && 'btn-active'" :title="`${t.label} (${i + 1})`" :aria-label="t.label" :aria-keyshortcuts="String(i + 1)" :aria-pressed="sim.tool === t.id" :disabled="sim.readOnly && t.id !== 'select'" @click="sim.tool = t.id">
+          <Icon :name="t.icon" />
+          <kbd class="pointer-events-none absolute bottom-0 right-0.5 font-sans text-[9px] leading-none opacity-60">{{ i + 1 }}</kbd>
         </button>
         <span class="mx-1 w-px bg-slate-200" />
-        <button class="btn" @click="sim.fitView()"><Icon name="lucide:maximize" />Sığdır</button>
-        <button class="btn" @click="exportPdf" title="Yazdır / PDF olarak kaydet"><Icon name="lucide:file-text" />Rapor (PDF)</button>
-        <button class="btn" @click="exportCsv"><Icon name="lucide:table" />CSV</button>
-        <button class="btn" :disabled="sim.readOnly" @click="loadExample"><Icon name="lucide:network" />Örnek ağ</button>
-        <label class="btn cursor-pointer"><input type="checkbox" v-model="sim.showLabels" />Etiketler</label>
+        <button class="btn" title="Geri al (Ctrl+Z)" aria-label="Geri al" aria-keyshortcuts="Control+Z" :disabled="sim.readOnly || !sim.canUndo" @click="sim.undo()"><Icon name="lucide:undo-2" /></button>
+        <button class="btn" title="Yinele (Ctrl+Y)" aria-label="Yinele" aria-keyshortcuts="Control+Y" :disabled="sim.readOnly || !sim.canRedo" @click="sim.redo()"><Icon name="lucide:redo-2" /></button>
+        <button class="btn" :class="showHistory && 'btn-active'" title="Sürüm geçmişi" :aria-pressed="showHistory" @click="showHistory = !showHistory"><Icon name="lucide:history" /><span class="hidden xl:inline">Geçmiş</span></button>
+        <span class="mx-1 w-px bg-slate-200" />
+        <button class="btn" title="Sığdır" aria-label="Sığdır" @click="sim.fitView()"><Icon name="lucide:maximize" /><span class="hidden 2xl:inline">Sığdır</span></button>
+        <button class="btn" title="Rapor: yazdır / PDF olarak kaydet" aria-label="Rapor (PDF)" @click="exportPdf"><Icon name="lucide:file-text" /><span class="hidden 2xl:inline">Rapor (PDF)</span></button>
+        <button class="btn" title="CSV indir" aria-label="CSV indir" @click="exportCsv"><Icon name="lucide:table" /><span class="hidden 2xl:inline">CSV</span></button>
+        <button class="btn" title="Örnek ağ yükle" aria-label="Örnek ağ yükle" :disabled="sim.readOnly" @click="loadExample"><Icon name="lucide:network" /><span class="hidden 2xl:inline">Örnek ağ</span></button>
+        <label class="btn cursor-pointer" title="Tuvaldeki değer etiketleri"><input type="checkbox" v-model="sim.showLabels" /><span class="hidden lg:inline">Etiketler</span></label>
         <ThemeToggle />
-        <button class="btn" :disabled="sim.readOnly" @click="clearAll"><Icon name="lucide:trash-2" />Tuvali temizle</button>
+        <button class="btn" title="Tuvali temizle" aria-label="Tuvali temizle" :disabled="sim.readOnly" @click="clearAll"><Icon name="lucide:trash-2" /><span class="hidden 2xl:inline">Tuvali temizle</span></button>
       </div>
     </header>
 
@@ -202,7 +217,12 @@ const stats = computed(() => {
     </div>
 
     <div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_320px] lg:grid-rows-[1fr_240px]">
-      <div class="relative min-h-[300px] border-r border-slate-200"><HydraulicCanvas /></div>
+      <div class="relative min-h-[300px] border-r border-slate-200">
+        <HydraulicCanvas />
+        <div v-if="showHistory" class="absolute bottom-12 right-2 top-2 z-10 w-80 max-w-[calc(100%-1rem)]">
+          <VersionHistory ref="history" :project-id="projectId" :can-edit="!sim.readOnly" :restore="restoreVersion" :save-named="saveNamedVersion" @close="showHistory = false" />
+        </div>
+      </div>
       <aside class="row-span-2 hidden overflow-auto border-l border-slate-200 bg-white lg:block">
         <div class="border-b border-slate-200 p-3">
           <div class="mb-2 inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium" :class="r.converged ? 'border-green-600 text-green-700' : 'border-red-600 text-red-700'">
