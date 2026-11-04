@@ -1,5 +1,5 @@
 -- FireFlow: proje düzenleme kilidi (aynı anda tek kişi düzenler)
--- Önkoşul: schema.sql ve 002_companies.sql çalıştırılmış olmalı.
+-- Önkoşul: initial_schema ve companies migration'ları.
 --
 -- Kurallar:
 --  * Firma projesini firmanın TÜM üyeleri (MEMBER dahil) düzenleyebilir, ama yalnızca aktif kilidi tutan kişi yazabilir.

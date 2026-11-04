@@ -1,6 +1,6 @@
 # FireFlow – Yangın Hidrolik Simülatörü (Nuxt 3 + Supabase)
 
-1. Supabase SQL Editor'de `supabase/schema.sql` dosyasını çalıştırın.
+1. Veritabanı: `supabase/migrations/` altındaki dosyaları sırayla uygulayın (bkz. **Veritabanı geliştirme**).
 2. `.env.example` → `.env` ve değerleri doldurun (anon key kullanın, service_role asla).
 3. Geliştirme: `npm install && npm run dev`
 4. Üretim: `docker compose up -d --build` → http://localhost:3000
@@ -25,15 +25,24 @@ Plan 1 kare = 1 m; her düğümün kotu (z, m) var. Toplam yük H = P + z·0.098
 - Açık/koyu tema: başlıktaki güneş/ay düğmesi; tercih tarayıcıda saklanır (varsayılan koyu).
 
 ## Firmalar (çok kiracılı)
-1. `supabase/schema.sql` → ardından sırayla `supabase/migrations/002_companies.sql` `003_project_locks.sql`, `004_revoke_trigger_fn_execute.sql` ve `005_project_versions.sql` dosyalarını SQL Editor'de çalıştırın.
+1. Şema `supabase/migrations/` altındaki migration'larla kurulur (firma, kilit, sürüm, realtime dahil).
 2. Supabase Auth ayarlarında **Confirm email açık kalmalı** (davetler yalnızca doğrulanmış e-postaya uygulanır).
 3. Roller: **OWNER** (her şey, rol/sahiplik), **ADMIN** (üye davet/çıkarma, firma projelerini düzenleme), **MEMBER**.
 4. Firma üyeleri birbirinin profilini ve firma projelerini görür. Silme yalnızca proje sahibi ile OWNER/ADMIN'dedir.
-5. **Proje kilidi** (`supabase/migrations/003_project_locks.sql`): firma projesini her üye düzenleyebilir, ama aynı anda yalnızca bir kişi. Projeyi açan kilidi alır (90 sn geçerli, açıkken 30 sn'de bir yenilenir; 10 dk hareketsizlikte bırakılır). Diğerleri salt okunur görür, kilit boşalınca “Düzenlemeye başla” ile devam eder; proje sahibi ve OWNER/ADMIN “Kilidi devral” diyebilir. Kilidini kaybeden kullanıcı kaydedilmemiş çalışmasını “Kopya oluştur” ile saklayabilir.
+5. **Proje kilidi** (`supabase/migrations/20261103212314_project_locks.sql`): firma projesini her üye düzenleyebilir, ama aynı anda yalnızca bir kişi. Projeyi açan kilidi alır (90 sn geçerli, açıkken 30 sn'de bir yenilenir; 10 dk hareketsizlikte bırakılır). Diğerleri salt okunur görür, kilit boşalınca “Düzenlemeye başla” ile devam eder; proje sahibi ve OWNER/ADMIN “Kilidi devral” diyebilir. Kilidini kaybeden kullanıcı kaydedilmemiş çalışmasını “Kopya oluştur” ile saklayabilir.
 6. Tüm kurallar veritabanında RLS + SECURITY DEFINER fonksiyonlarla uygulanır; arayüz yalnızca yansıtır.
 
 ## Sürüm geçmişi, geri alma ve kısayollar
-- **Sürüm geçmişi** (`005_project_versions.sql`, başlıktaki “Geçmiş”): her kayıtta veritabanı tetikleyicisi sürüm tutar. Aynı kişinin 10 dk içindeki düzenlemeleri tek sürümde birleşir, yalnızca yakınlaştırma/kaydırma sürüm oluşturmaz. Son 100 otomatik sürüm saklanır; “adlandırarak kaydet” ile oluşturulanlar silinmez. “Geri dön” şimdiki hâli de geçmişte bırakır (firma projesinde kilit gerekir).
+- **Sürüm geçmişi** (`20261103213426_project_versions.sql`, başlıktaki “Geçmiş”): her kayıtta veritabanı tetikleyicisi sürüm tutar. Aynı kişinin 10 dk içindeki düzenlemeleri tek sürümde birleşir, yalnızca yakınlaştırma/kaydırma sürüm oluşturmaz. Son 100 otomatik sürüm saklanır; “adlandırarak kaydet” ile oluşturulanlar silinmez. “Geri dön” şimdiki hâli de geçmişte bırakır (firma projesinde kilit gerekir).
 - **Geri al / yinele**: Ctrl+Z, Ctrl+Y (veya Ctrl+Shift+Z); son 100 adım, oturum içinde. Sürüklemeler tek adım sayılır.
 - **Araç kısayolları**: 1 Seç · 2 Boru · 3 Su kaynağı · 4 Pompa · 5 Bağlantı · 6 Sprinkler · 7 Hidrant · 8 Sil · Esc: çizimi bitir · Del: seçiliyi sil.
 - **Etiketler**: çakışan etiketler önceliğe göre gizlenir (ad > basınç > debi > boru); yakınlaştırdıkça görünür. Seçili öğenin etiketleri her zaman gösterilir.
+
+## Veritabanı geliştirme (Supabase CLI)
+Gereken: Docker. CLI devDependency olarak gelir (`npx supabase`).
+- `npm run db:start` — yerel Postgres + Auth + REST (portlar 554xx; başka yerel Supabase projesiyle çakışmaz), tüm migration'ları uygular.
+- `npm run db:test` — `supabase/tests/database/*.test.sql` pgTAP testleri (firma RLS, düzenleme kilidi, sürüm geçmişi). Her dosya kendi işleminde çalışıp geri alınır; ortak kullanıcı/proje kurulumu `setup.psql`.
+- `npm run db:reset` — yerel veritabanını sıfırdan kurar.
+- `npm run db:types` — `types/database.types.ts` dosyasını yerel şemadan üretir; `useSupabaseClient()` bu tiplerle tiplidir. Migration ekledikten sonra çalıştırın.
+- Yeni migration: `npx supabase migration new <ad>` → SQL'i yazın → `npm run db:reset && npm run db:test && npm run db:types`.
+- Uzak projeye uygulama: `npx supabase login && npx supabase link --project-ref <ref>` → `npx supabase db push`.

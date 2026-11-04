@@ -1,5 +1,5 @@
 -- FireFlow: Supabase Realtime (15 sn polling yerine anlık bildirim)
--- Önkoşul: 003_project_locks.sql çalıştırılmış olmalı.
+-- Önkoşul: project_locks migration'ı.
 --
 --  * project_locks: kilit alındı/yenilendi/bırakıldı/devralındı → salt okunur bekleyen ve dashboard anında görür.
 --  * projects: düzenleyen kaydettikçe salt okunur izleyiciler canlı günceller.

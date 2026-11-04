@@ -4,7 +4,7 @@ export interface Invite { id: string; email: string; role: 'ADMIN' | 'MEMBER'; c
 
 /** Kullanıcının firması, üyeleri ve davetleri. Yetki kararlarını veritabanı (RLS) verir; buradaki rol yalnızca arayüzü şekillendirir. */
 export function useCompany() {
-  const client = useSupabaseClient<any>()
+  const client = useSupabaseClient()
   const user = useSupabaseUser()
 
   const loaded = useState('company:loaded', () => false)

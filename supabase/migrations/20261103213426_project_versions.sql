@@ -1,5 +1,5 @@
 -- FireFlow: proje sürüm geçmişi
--- Önkoşul: 003_project_locks.sql
+-- Önkoşul: project_locks migration'ı
 --
 -- Kurallar:
 --  * grid_data her değiştiğinde (yalnızca görünüm/zoom değişikliği sayılmaz) tetikleyici sürüm kaydeder.

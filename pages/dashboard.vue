@@ -2,7 +2,7 @@
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
 definePageMeta({ middleware: 'auth' })
-const client = useSupabaseClient<any>()
+const client = useSupabaseClient()
 const user = useSupabaseUser()
 const co = useCompany()
 
@@ -25,16 +25,17 @@ async function refresh() {
   loading.value = false
 }
 
+const holderName = (h: { full_name: string | null; email: string } | null) => h?.full_name || h?.email
 let expiryTimer: ReturnType<typeof setTimeout> | undefined
 let locksTimer: ReturnType<typeof setTimeout> | undefined
 let channel: RealtimeChannel | undefined
 async function loadLocks() {
   const { data: locks } = await client.from('project_locks').select('project_id, user_id, expires_at, holder:profiles!user_id(full_name,email)')
-  const others = (locks ?? []).filter((l: any) => l.user_id !== user.value?.id)
-  editing.value = Object.fromEntries(others.map((l: any) => [l.project_id, l.holder?.full_name || l.holder?.email || 'Başka bir kullanıcı']))
+  const others = (locks ?? []).filter((l) => l.user_id !== user.value?.id)
+  editing.value = Object.fromEntries(others.map((l) => [l.project_id, holderName(l.holder) || 'Başka bir kullanıcı']))
   // Süresi dolan kilit olay üretmez: en erken dolacak olanın ardından yeniden bak (saat farkına 1 sn pay)
   clearTimeout(expiryTimer)
-  const next = Math.min(...others.map((l: any) => new Date(l.expires_at).getTime()))
+  const next = Math.min(...others.map((l) => new Date(l.expires_at).getTime()))
   if (Number.isFinite(next)) expiryTimer = setTimeout(loadLocks, Math.max(0, next - Date.now()) + 1000)
 }
 /** Kilit olayları art arda gelebilir (yenileme, devralma): tek sorguda topla */

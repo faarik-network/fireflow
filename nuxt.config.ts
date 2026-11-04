@@ -3,7 +3,7 @@ export default defineNuxtConfig({
   modules: ['@nuxtjs/supabase', '@nuxtjs/tailwindcss', '@pinia/nuxt', '@nuxt/icon'],
   css: ['~/assets/css/main.css'],
   // Route koruması kendi middleware'imizde (middleware/auth.ts)
-  supabase: { redirect: false, types: false },
+  supabase: { redirect: false, types: '~/types/database.types.ts' },
   icon: { serverBundle: 'local', clientBundle: { scan: true } },
   app: {
     head: {

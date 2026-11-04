@@ -3,13 +3,15 @@ const IDLE_MS = 10 * 60_000 // bu süre hareketsiz kalınırsa kilit bırakılı
 const ACTIVITY = ['pointerdown', 'keydown', 'wheel'] as const
 
 export type LockState = 'none' | 'held' | 'busy' | 'lost' | 'idle'
+/** acquire_project_lock dönüşü (jsonb) */
+type LockResult = { ok: boolean; required?: boolean; expires_at?: string; holder_name?: string | null }
 
 /**
  * Firma projesi düzenleme kilidi. Asıl denetim veritabanında (RLS + acquire_project_lock);
  * burası kilidi alır, yeniler, hareketsizlikte/ayrılışta bırakır ve kaybedildiğini bildirir.
  */
 export function useProjectLock(projectId: string, hooks: { beforeRelease?: () => Promise<void>; onLost?: (s: LockState) => void } = {}) {
-  const client = useSupabaseClient<any>()
+  const client = useSupabaseClient()
   const state = ref<LockState>('none')
   const holder = ref('')
   let renewTimer: ReturnType<typeof setInterval> | undefined
@@ -29,7 +31,8 @@ export function useProjectLock(projectId: string, hooks: { beforeRelease?: () =>
 
   /** Kilidi al. Kişisel projede kilit gerekmez ve 'none' döner. */
   async function acquire(force = false): Promise<boolean> {
-    const { data, error } = await client.rpc('acquire_project_lock', { p_project: projectId, p_force: force })
+    const { data: raw, error } = await client.rpc('acquire_project_lock', { p_project: projectId, p_force: force })
+    const data = raw as LockResult | null
     if (error || !data) { holder.value = ''; state.value = 'busy'; return false }
     if (data.ok) {
       holder.value = ''
@@ -45,9 +48,10 @@ export function useProjectLock(projectId: string, hooks: { beforeRelease?: () =>
   async function renew() {
     if (state.value !== 'held') return
     if (Date.now() - lastActivity > IDLE_MS) { await release('idle'); hooks.onLost?.('idle'); return }
-    const { data, error } = await client.rpc('acquire_project_lock', { p_project: projectId, p_force: false })
+    const { data: raw, error } = await client.rpc('acquire_project_lock', { p_project: projectId, p_force: false })
+    const data = raw as LockResult | null
     if (error) return // ağ hatası: bir sonraki turda tekrar dene (kilit 90 sn geçerli)
-    if (!data?.ok) lost(data?.holder_name)
+    if (!data?.ok) lost(data?.holder_name ?? undefined)
   }
 
   /** Kaydetme sırasında kilidin elden gittiği anlaşılırsa çağrılır */

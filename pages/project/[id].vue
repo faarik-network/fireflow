@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import type { Json, Tables } from '~/types/database.types'
+import type { GridData } from '~/types/hydraulic'
 
 definePageMeta({ middleware: 'auth' })
 
 const route = useRoute()
-const client = useSupabaseClient<any>()
+const client = useSupabaseClient()
 const user = useSupabaseUser()
 const co = useCompany()
 const sim = useSimulator()
@@ -45,12 +47,12 @@ async function loadProject(opts: { keepView?: boolean } = {}) {
   if (error || !data) return null
   ready.value = false
   title.value = data.title
-  lastUpdated = data.updated_at
+  lastUpdated = data.updated_at ?? ''
   hasUpdates.value = false
   dirty.value = false
   const o = data.owner as unknown as { full_name: string | null; email: string } | null
   ownerName.value = o?.full_name || o?.email || 'Eski üye'
-  sim.load(data.grid_data, opts)
+  sim.load(data.grid_data as Partial<GridData> | null, opts)
   await nextTick()
   ready.value = true
   return data
@@ -87,7 +89,7 @@ function startPoll() { stopPoll(); pollTimer = setInterval(poll, 60_000) }
 function stopPoll() { clearInterval(pollTimer); pollTimer = undefined; clearTimeout(expiryTimer) }
 
 /** Kilit satırı değişti (null: silindi) */
-function onLockChanged(row: { user_id: string; expires_at: string } | null) {
+function onLockChanged(row: Pick<Tables<'project_locks'>, 'user_id' | 'expires_at'> | null) {
   if (lock.state.value === 'held') {
     // Kilit bizdeyken başkasına geçtiyse devralınmıştır: kaydetmeyi beklemeden hemen salt okunura geç
     if (row && row.user_id !== user.value?.id) lock.peek().then((n) => lock.lost(n ?? undefined))
@@ -111,12 +113,12 @@ function onProjectChanged() {
 function subscribe() {
   const lockTable = { schema: 'public', table: 'project_locks' } as const
   channel = client.channel(`project:${projectId}`)
-    .on('postgres_changes', { ...lockTable, event: 'INSERT', filter: `project_id=eq.${projectId}` }, (e) => onLockChanged(e.new as any))
-    .on('postgres_changes', { ...lockTable, event: 'UPDATE', filter: `project_id=eq.${projectId}` }, (e) => onLockChanged(e.new as any))
+    .on<Tables<'project_locks'>>('postgres_changes', { ...lockTable, event: 'INSERT', filter: `project_id=eq.${projectId}` }, (e) => onLockChanged(e.new))
+    .on<Tables<'project_locks'>>('postgres_changes', { ...lockTable, event: 'UPDATE', filter: `project_id=eq.${projectId}` }, (e) => onLockChanged(e.new))
     // DELETE olayları süzülemiyor; yalnızca PK (project_id) gelir
-    .on('postgres_changes', { ...lockTable, event: 'DELETE' }, (e) => { if ((e.old as any).project_id === projectId) onLockChanged(null) })
-    .on('postgres_changes', { schema: 'public', table: 'projects', event: 'UPDATE', filter: `id=eq.${projectId}` }, (e) => {
-      if ((e.new as any).updated_at !== lastUpdated) onProjectChanged()
+    .on<Tables<'project_locks'>>('postgres_changes', { ...lockTable, event: 'DELETE' }, (e) => { if (e.old.project_id === projectId) onLockChanged(null) })
+    .on<Tables<'projects'>>('postgres_changes', { schema: 'public', table: 'projects', event: 'UPDATE', filter: `id=eq.${projectId}` }, (e) => {
+      if (e.new.updated_at !== lastUpdated) onProjectChanged()
     })
     // (Yeniden) bağlanınca kaçırılan olayları telafi et
     .subscribe((s) => { if (s === 'SUBSCRIBED' && sim.readOnly) poll() })
@@ -143,11 +145,11 @@ async function save() {
   dirty.value = false
   status.value = 'saving'
   const { data, error } = await client.from('projects')
-    .update({ grid_data: sim.serialized, updated_at: new Date().toISOString() }).eq('id', projectId).select('updated_at')
+    .update({ grid_data: sim.serialized as unknown as NonNullable<Json>, updated_at: new Date().toISOString() }).eq('id', projectId).select('updated_at')
   if (error) { dirty.value = true; status.value = 'error'; timer = setTimeout(save, 5000); return }
   // RLS satırı güncellemediyse kilit elimizde değil
   if (!data?.length) { dirty.value = true; status.value = 'error'; lock.lost(); return }
-  lastUpdated = data[0].updated_at
+  lastUpdated = data[0].updated_at ?? ''
   status.value = 'saved'
   if (showHistory.value) history.value?.load()
 }
@@ -189,7 +191,7 @@ onBeforeUnmount(async () => {
 async function duplicate() {
   if (!user.value) return
   const { data, error } = await client.from('projects')
-    .insert({ title: `${title.value} (kopya)`, user_id: user.value.id, grid_data: sim.serialized })
+    .insert({ title: `${title.value} (kopya)`, user_id: user.value.id, grid_data: sim.serialized as unknown as NonNullable<Json> })
     .select('id').single()
   if (error) { alert(error.message); return }
   await navigateTo(`/project/${data.id}`, { external: true })

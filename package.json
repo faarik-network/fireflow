@@ -7,7 +7,12 @@
     "build": "nuxt build",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "test:solver": "tsx utils/hydraulicSolver.test.ts"
+    "test:solver": "tsx utils/hydraulicSolver.test.ts",
+    "db:start": "supabase start -x studio,imgproxy,storage-api,edge-runtime,logflare,vector,mailpit,realtime,supavisor,postgres-meta",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db",
+    "db:types": "supabase gen types typescript --local > types/database.types.ts"
   },
   "dependencies": {
     "@nuxt/icon": "^1.5.0",
@@ -20,6 +25,7 @@
     "vue-router": "latest"
   },
   "devDependencies": {
+    "supabase": "^2.122.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vue-tsc": "^3.3.14"

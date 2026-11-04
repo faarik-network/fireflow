@@ -7,7 +7,7 @@ const props = defineProps<{
   saveNamed: (label: string) => Promise<boolean>
 }>()
 const emit = defineEmits<{ close: [] }>()
-const client = useSupabaseClient<any>()
+const client = useSupabaseClient()
 
 interface Version {
   id: string; label: string | null; reason: 'baseline' | 'edit' | 'restore' | 'manual'
