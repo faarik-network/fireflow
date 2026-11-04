@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { RealtimeChannel } from '@supabase/supabase-js'
+
 definePageMeta({ middleware: 'auth' })
 const client = useSupabaseClient<any>()
 const user = useSupabaseUser()
@@ -19,15 +21,37 @@ async function refresh() {
     .order('updated_at', { ascending: false })
   if (err) error.value = err.message
   projects.value = (data ?? []) as unknown as Row[]
-  const { data: locks } = await client.from('project_locks').select('project_id, user_id, holder:profiles!user_id(full_name,email)')
-  editing.value = Object.fromEntries((locks ?? []).filter((l: any) => l.user_id !== user.value?.id)
-    .map((l: any) => [l.project_id, l.holder?.full_name || l.holder?.email || 'Başka bir kullanıcı']))
+  await loadLocks()
   loading.value = false
 }
+
+let expiryTimer: ReturnType<typeof setTimeout> | undefined
+let locksTimer: ReturnType<typeof setTimeout> | undefined
+let channel: RealtimeChannel | undefined
+async function loadLocks() {
+  const { data: locks } = await client.from('project_locks').select('project_id, user_id, expires_at, holder:profiles!user_id(full_name,email)')
+  const others = (locks ?? []).filter((l: any) => l.user_id !== user.value?.id)
+  editing.value = Object.fromEntries(others.map((l: any) => [l.project_id, l.holder?.full_name || l.holder?.email || 'Başka bir kullanıcı']))
+  // Süresi dolan kilit olay üretmez: en erken dolacak olanın ardından yeniden bak (saat farkına 1 sn pay)
+  clearTimeout(expiryTimer)
+  const next = Math.min(...others.map((l: any) => new Date(l.expires_at).getTime()))
+  if (Number.isFinite(next)) expiryTimer = setTimeout(loadLocks, Math.max(0, next - Date.now()) + 1000)
+}
+/** Kilit olayları art arda gelebilir (yenileme, devralma): tek sorguda topla */
+function scheduleLocks() { clearTimeout(locksTimer); locksTimer = setTimeout(loadLocks, 300) }
+
 onMounted(async () => {
   joined.value = await co.acceptInvites() // bekleyen davet varsa firmaya katıl
   if (!co.loaded.value) await co.refresh()
   await refresh()
+  // Canlı "X düzenliyor" rozetleri; INSERT/UPDATE RLS ile süzülür, DELETE yalnızca PK taşır
+  channel = client.channel('dashboard:locks')
+    .on('postgres_changes', { schema: 'public', table: 'project_locks', event: '*' }, scheduleLocks)
+    .subscribe((s) => { if (s === 'SUBSCRIBED') scheduleLocks() })
+})
+onBeforeUnmount(() => {
+  clearTimeout(expiryTimer); clearTimeout(locksTimer)
+  if (channel) client.removeChannel(channel)
 })
 
 const mine = (p: Row) => p.user_id === user.value?.id

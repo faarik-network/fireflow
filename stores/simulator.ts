@@ -199,17 +199,23 @@ export const useSimulator = defineStore('simulator', () => {
     design: design.value
   }))
 
-  function load(data: Partial<GridData> | null | undefined) {
+  /** keepView: canlı güncellemede görünüm ve (hâlâ varsa) seçim korunur */
+  function load(data: Partial<GridData> | null | undefined, opts: { keepView?: boolean } = {}) {
+    const prevSel = selected.value
     silently(() => {
       nodes.value = data?.nodes ?? []
       pipes.value = data?.pipes ?? []
-      view.value = data?.view ?? { zoom: 1, panX: 0, panY: 0 }
+      if (!opts.keepView) view.value = data?.view ?? { zoom: 1, panX: 0, panY: 0 }
       ensureNames()
       design.value = data?.design ? { ...defaultDesign(), ...data.design } : defaultDesign()
     })
     resetHistory()
-    selected.value = null
     tool.value = 'select'
+    if (opts.keepView) {
+      if (prevSel && !(prevSel.kind === 'node' ? nodes.value : pipes.value).some((x) => x.id === prevSel.id)) selected.value = null
+      return
+    }
+    selected.value = null
     if (nodes.value.length) fitView()
   }
 

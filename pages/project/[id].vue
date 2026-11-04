@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { RealtimeChannel } from '@supabase/supabase-js'
+
 definePageMeta({ middleware: 'auth' })
 
 const route = useRoute()
@@ -23,6 +25,9 @@ const hasUpdates = ref(false)
 let lastUpdated = ''
 let timer: ReturnType<typeof setTimeout>
 let pollTimer: ReturnType<typeof setInterval> | undefined
+let expiryTimer: ReturnType<typeof setTimeout> | undefined
+let liveTimer: ReturnType<typeof setTimeout> | undefined
+let channel: RealtimeChannel | undefined
 
 const lock = useProjectLock(projectId, {
   beforeRelease: () => save(),
@@ -33,7 +38,7 @@ const showHistory = ref(false)
 const history = ref<{ load: () => Promise<void> } | null>(null)
 
 /** Projeyi sunucudan (yeniden) yükle; yükleme otomatik kaydı tetiklemez */
-async function loadProject() {
+async function loadProject(opts: { keepView?: boolean } = {}) {
   const { data, error } = await client.from('projects')
     .select('title,grid_data,user_id,company_id,updated_at,owner:profiles!user_id(full_name,email)')
     .eq('id', projectId).single()
@@ -45,7 +50,7 @@ async function loadProject() {
   dirty.value = false
   const o = data.owner as unknown as { full_name: string | null; email: string } | null
   ownerName.value = o?.full_name || o?.email || 'Eski üye'
-  sim.load(data.grid_data)
+  sim.load(data.grid_data, opts)
   await nextTick()
   ready.value = true
   return data
@@ -56,6 +61,7 @@ onMounted(async () => {
   sim.readOnly = true
   const data = await loadProject()
   if (!data) { await navigateTo('/dashboard'); return }
+  subscribe()
   // Düzenleme: proje sahibi veya aynı firmanın herhangi bir üyesi, kilidi tutuyorsa (asıl denetim RLS'te)
   const owner = data.user_id === user.value?.id
   const sameCompany = !!data.company_id && data.company_id === co.company.value?.id
@@ -69,14 +75,52 @@ onMounted(async () => {
   window.addEventListener('pagehide', onPageHide)
 })
 
-/** Salt okunur bekleyen kullanıcı: kilit boşaldı mı, proje değişti mi? */
+/** Salt okunur bekleyen kullanıcı: kilit kimde, proje değişti mi? (Realtime olaylarında ve yedek olarak periyodik) */
 async function poll() {
   const [h, p] = await Promise.all([lock.peek(), client.from('projects').select('updated_at').eq('id', projectId).single()])
+  if (lock.state.value === 'held') return // bu arada kilidi aldık; eski sonuç busyBy'ı bozmasın
   busyBy.value = h
-  if (p.data && p.data.updated_at !== lastUpdated) hasUpdates.value = true
+  if (p.data && p.data.updated_at !== lastUpdated) onProjectChanged()
 }
-function startPoll() { stopPoll(); pollTimer = setInterval(poll, 15_000) }
-function stopPoll() { clearInterval(pollTimer); pollTimer = undefined }
+/** Realtime asıl kanal; bağlantı sessizce koparsa diye seyrek yedek kontrol */
+function startPoll() { stopPoll(); pollTimer = setInterval(poll, 60_000) }
+function stopPoll() { clearInterval(pollTimer); pollTimer = undefined; clearTimeout(expiryTimer) }
+
+/** Kilit satırı değişti (null: silindi) */
+function onLockChanged(row: { user_id: string; expires_at: string } | null) {
+  if (lock.state.value === 'held') {
+    // Kilit bizdeyken başkasına geçtiyse devralınmıştır: kaydetmeyi beklemeden hemen salt okunura geç
+    if (row && row.user_id !== user.value?.id) lock.peek().then((n) => lock.lost(n ?? undefined))
+    return
+  }
+  if (!lockRequired.value) return
+  // Süresi dolan kilit olay üretmez: dolduğu an kendimiz bakalım (saat farkına 1 sn pay)
+  clearTimeout(expiryTimer)
+  if (row) expiryTimer = setTimeout(poll, Math.max(0, new Date(row.expires_at).getTime() - Date.now()) + 1000)
+  poll()
+}
+
+/** Proje başkası tarafından kaydedildi: değişiklik yoksa canlı yükle, varsa kullanıcıya sor */
+function onProjectChanged() {
+  if (!sim.readOnly) return // düzenleyen biziz; olay kendi kaydımız
+  if (dirty.value) { hasUpdates.value = true; return }
+  clearTimeout(liveTimer)
+  liveTimer = setTimeout(() => { if (sim.readOnly && !dirty.value) loadProject({ keepView: true }) }, 500)
+}
+
+function subscribe() {
+  const lockTable = { schema: 'public', table: 'project_locks' } as const
+  channel = client.channel(`project:${projectId}`)
+    .on('postgres_changes', { ...lockTable, event: 'INSERT', filter: `project_id=eq.${projectId}` }, (e) => onLockChanged(e.new as any))
+    .on('postgres_changes', { ...lockTable, event: 'UPDATE', filter: `project_id=eq.${projectId}` }, (e) => onLockChanged(e.new as any))
+    // DELETE olayları süzülemiyor; yalnızca PK (project_id) gelir
+    .on('postgres_changes', { ...lockTable, event: 'DELETE' }, (e) => { if ((e.old as any).project_id === projectId) onLockChanged(null) })
+    .on('postgres_changes', { schema: 'public', table: 'projects', event: 'UPDATE', filter: `id=eq.${projectId}` }, (e) => {
+      if ((e.new as any).updated_at !== lastUpdated) onProjectChanged()
+    })
+    // (Yeniden) bağlanınca kaçırılan olayları telafi et
+    .subscribe((s) => { if (s === 'SUBSCRIBED' && sim.readOnly) poll() })
+}
 
 async function startEditing(force = false) {
   if (force && !confirm(`${busyBy.value ?? 'Diğer kullanıcı'} şu an düzenliyor. Kilidi devralırsanız onun kaydedilmemiş son değişiklikleri kaybolabilir. Devam edilsin mi?`)) return
@@ -133,7 +177,8 @@ async function saveNamedVersion(label: string) {
 
 function onPageHide() { if (lock.state.value === 'held') { save(); client.rpc('release_project_lock', { p_project: projectId }) } }
 onBeforeUnmount(async () => {
-  clearTimeout(timer); stopPoll()
+  clearTimeout(timer); clearTimeout(liveTimer); stopPoll()
+  if (channel) client.removeChannel(channel)
   if (import.meta.client) window.removeEventListener('pagehide', onPageHide)
   if (lock.state.value === 'held') await lock.release() // önce kaydeder
   else await save()
