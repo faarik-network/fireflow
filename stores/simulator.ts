@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { HNode, HPipe, Tool, DN, CFactor, GridData, SolveResult, NodeType, DesignSettings } from '~/types/hydraulic'
+import type { HNode, HPipe, Tool, DN, CFactor, GridData, SolveResult, NodeType, DesignSettings, PlanBackground } from '~/types/hydraulic'
 import { defaultDesign, evaluateDesign, autoDesignArea } from '~/utils/nfpa'
 import { DEFAULT_PUMP } from '~/utils/hydraulicSolver'
 
@@ -41,9 +41,12 @@ export const useSimulator = defineStore('simulator', () => {
   /** Başkasının projesini (yetkisiz) açınca true: düzenleme ve kaydetme kapalı */
   const readOnly = ref(false)
   const design = ref<DesignSettings>(defaultDesign())
+  const background = ref<PlanBackground | null>(null)
+  /** Plan üzerinde etkileşim: taşı veya iki noktayla ölçekle (kaydedilmez) */
+  const planMode = ref<'move' | 'calibrate' | null>(null)
 
   const result = computed<SolveResult>(() => solveNetwork(nodes.value, pipes.value))
-  // ---------- Geri al / yinele (yalnızca model: düğüm, boru, tasarım; görünüm hariç) ----------
+  // ---------- Geri al / yinele (model: düğüm, boru, tasarım, plan yerleşimi; görünüm hariç) ----------
   const past: string[] = []
   const future: string[] = []
   let present = ''
@@ -51,7 +54,7 @@ export const useSimulator = defineStore('simulator', () => {
   let histTimer: ReturnType<typeof setTimeout> | undefined
   const canUndo = ref(false)
   const canRedo = ref(false)
-  const snapshot = () => JSON.stringify({ nodes: nodes.value, pipes: pipes.value, design: design.value })
+  const snapshot = () => JSON.stringify({ nodes: nodes.value, pipes: pipes.value, design: design.value, background: background.value })
   const syncHist = () => { canUndo.value = past.length > 0; canRedo.value = future.length > 0 }
   /** Arka arkaya gelen küçük değişiklikleri (ör. sürükleme) tek adımda topla */
   function commitHistory() {
@@ -77,8 +80,8 @@ export const useSimulator = defineStore('simulator', () => {
     syncHist()
   }
   function applySnapshot(s: string) {
-    const d = JSON.parse(s) as { nodes: HNode[]; pipes: HPipe[]; design: DesignSettings }
-    silently(() => { nodes.value = d.nodes; pipes.value = d.pipes; design.value = d.design })
+    const d = JSON.parse(s) as { nodes: HNode[]; pipes: HPipe[]; design: DesignSettings; background: PlanBackground | null }
+    silently(() => { nodes.value = d.nodes; pipes.value = d.pipes; design.value = d.design; background.value = d.background })
     present = s
     const sel = selected.value
     if (sel && !(sel.kind === 'node' ? nodes.value : pipes.value).some((x) => x.id === sel.id)) selected.value = null
@@ -100,7 +103,7 @@ export const useSimulator = defineStore('simulator', () => {
     past.push(present)
     applySnapshot(s)
   }
-  watch([nodes, pipes, design], () => {
+  watch([nodes, pipes, design, background], () => {
     if (applying) return
     clearTimeout(histTimer)
     histTimer = setTimeout(commitHistory, 300)
@@ -148,6 +151,18 @@ export const useSimulator = defineStore('simulator', () => {
     selected.value = null
   }
   function fitView() { fitRequest.value++ }
+
+  /** İki dünya noktası arası gerçek mesafe `meters` olacak şekilde planı ölçekle; a noktası yerinde kalır */
+  function calibratePlan(a: { x: number; y: number }, b: { x: number; y: number }, meters: number) {
+    const bg = background.value
+    const d = Math.hypot(b.x - a.x, b.y - a.y)
+    if (!bg || readOnly.value || !(meters > 0) || d < 1e-6) return
+    const f = (meters * GRID) / d
+    bg.scale *= f
+    bg.x = a.x + (bg.x - a.x) * f
+    bg.y = a.y + (bg.y - a.y) * f
+    bg.calibrated = true
+  }
   /** Adı olmayan (eski) öğelere otomatik ad ver */
   function ensureNames() {
     for (const n of nodes.value) if (!n.name) n.name = nextName(PREFIX[n.type], nodes.value.map((x) => x.name))
@@ -196,7 +211,8 @@ export const useSimulator = defineStore('simulator', () => {
     nodes: nodes.value,
     pipes: pipes.value,
     view: view.value,
-    design: design.value
+    design: design.value,
+    ...(background.value ? { background: background.value } : {})
   }))
 
   /** keepView: canlı güncellemede görünüm ve (hâlâ varsa) seçim korunur */
@@ -208,7 +224,9 @@ export const useSimulator = defineStore('simulator', () => {
       if (!opts.keepView) view.value = data?.view ?? { zoom: 1, panX: 0, panY: 0 }
       ensureNames()
       design.value = data?.design ? { ...defaultDesign(), ...data.design } : defaultDesign()
+      background.value = data?.background ?? null
     })
+    planMode.value = null
     resetHistory()
     tool.value = 'select'
     if (opts.keepView) {
@@ -220,7 +238,7 @@ export const useSimulator = defineStore('simulator', () => {
   }
 
   return {
-    nodes, pipes, tool, selected, snap, view, defaults, fitRequest, showLabels, readOnly, design, designEval, openDesignArea, result,
+    nodes, pipes, tool, selected, snap, view, defaults, fitRequest, showLabels, readOnly, design, designEval, openDesignArea, result, background, planMode, calibratePlan,
     selectedNode, selectedPipe, serialized,
     snapPt, addNode, addPipe, removeNode, removePipe, clear, fitView, load, loadExample,
     canUndo, canRedo, undo, redo

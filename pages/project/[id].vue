@@ -37,6 +37,9 @@ const lock = useProjectLock(projectId, {
 })
 
 const showHistory = ref(false)
+const showPlan = ref(false)
+watch(showHistory, (v) => { if (v) showPlan.value = false })
+watch(showPlan, (v) => { if (v) showHistory.value = false; else sim.planMode = null })
 const history = ref<{ load: () => Promise<void> } | null>(null)
 
 /** Projeyi sunucudan (yeniden) yükle; yükleme otomatik kaydı tetiklemez */
@@ -235,6 +238,7 @@ const stats = computed(() => {
         <span class="mx-1 w-px bg-slate-200" />
         <button class="btn" title="Geri al (Ctrl+Z)" aria-label="Geri al" aria-keyshortcuts="Control+Z" :disabled="sim.readOnly || !sim.canUndo" @click="sim.undo()"><Icon name="lucide:undo-2" /></button>
         <button class="btn" title="Yinele (Ctrl+Y)" aria-label="Yinele" aria-keyshortcuts="Control+Y" :disabled="sim.readOnly || !sim.canRedo" @click="sim.redo()"><Icon name="lucide:redo-2" /></button>
+        <button class="btn" :class="showPlan && 'btn-active'" title="Arka plan planı (PDF/görsel)" :aria-pressed="showPlan" @click="showPlan = !showPlan"><Icon name="lucide:map" /><span class="hidden xl:inline">Plan</span></button>
         <button class="btn" :class="showHistory && 'btn-active'" title="Sürüm geçmişi" :aria-pressed="showHistory" @click="showHistory = !showHistory"><Icon name="lucide:history" /><span class="hidden xl:inline">Geçmiş</span></button>
         <span class="mx-1 w-px bg-slate-200" />
         <button class="btn" title="Sığdır" aria-label="Sığdır" @click="sim.fitView()"><Icon name="lucide:maximize" /><span class="hidden 2xl:inline">Sığdır</span></button>
@@ -266,6 +270,9 @@ const stats = computed(() => {
     <div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_320px] lg:grid-rows-[1fr_240px]">
       <div class="relative min-h-[300px] border-r border-slate-200">
         <HydraulicCanvas />
+        <div v-if="showPlan" class="absolute right-2 top-2 z-10 max-h-[calc(100%-3.5rem)] w-72 max-w-[calc(100%-1rem)]">
+          <PlanPanel :project-id="projectId" :can-edit="!sim.readOnly" @close="showPlan = false" />
+        </div>
         <div v-if="showHistory" class="absolute bottom-12 right-2 top-2 z-10 w-80 max-w-[calc(100%-1rem)]">
           <VersionHistory ref="history" :project-id="projectId" :can-edit="!sim.readOnly" :restore="restoreVersion" :save-named="saveNamedVersion" @close="showHistory = false" />
         </div>

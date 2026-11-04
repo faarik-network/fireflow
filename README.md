@@ -38,6 +38,11 @@ Plan 1 kare = 1 m; her düğümün kotu (z, m) var. Toplam yük H = P + z·0.098
 - **Araç kısayolları**: 1 Seç · 2 Boru · 3 Su kaynağı · 4 Pompa · 5 Bağlantı · 6 Sprinkler · 7 Hidrant · 8 Sil · Esc: çizimi bitir · Del: seçiliyi sil.
 - **Etiketler**: çakışan etiketler önceliğe göre gizlenir (ad > basınç > debi > boru); yakınlaştırdıkça görünür. Seçili öğenin etiketleri her zaman gösterilir.
 
+## Arka plan planı
+- Başlıktaki “Plan”: PDF (sayfa seçilir), PNG, JPG veya WebP kat planı tuvalin altına yerleşir. Dosya tarayıcıda görsele çevrilir (en uzun kenar 4096 px, en çok 10 MB) ve özel `project-plans` Storage bucket'ına yüklenir; `grid_data` yalnızca yolu ve yerleşimi tutar.
+- “Ölçekle”: ölçüsünü bildiğiniz iki noktaya tıklayıp gerçek mesafeyi (m) girin. “Taşı”, “Kilitle”, “Gizle”, saydamlık; “Değiştir” yeni revizyonu aynı yere aynı genişlikte koyar. Koyu temada plan renkleri ters çevrilir. Plan değişiklikleri Ctrl+Z ile geri alınır ve sürüm geçmişine girer.
+- Yetki (`20261104185702_project_plans.sql`): planı projeyi görebilen herkes görür; yalnızca projeyi şu an yazabilen (kişisel projede sahibi, firma projesinde kilit sahibi) yükler. Dosyalar silinmez/değiştirilmez ki eski sürümler eski planı göstersin.
+
 ## Veritabanı geliştirme (Supabase CLI)
 Gereken: Docker. CLI devDependency olarak gelir (`npx supabase`).
 - `npm run db:start` — yerel Postgres + Auth + REST (portlar 554xx; başka yerel Supabase projesiyle çakışmaz), tüm migration'ları uygular.

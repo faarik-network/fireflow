@@ -73,6 +73,22 @@ export interface GridData {
   pipes: HPipe[]
   view: { zoom: number; panX: number; panY: number }
   design?: DesignSettings
+  background?: PlanBackground
+}
+
+/** Arka plan planı: dosya Storage'da ('project-plans'), burada yalnızca yolu ve yerleşimi */
+export interface PlanBackground {
+  path: string // bucket içindeki yol: <project_id>/<uuid>.<uzantı>
+  name: string // özgün dosya adı (PDF ise sayfa no ile)
+  w: number // görsel genişliği (px)
+  h: number // görsel yüksekliği (px)
+  x: number // sol üst köşe, dünya birimi
+  y: number
+  scale: number // dünya birimi / piksel (GRID = 1 m)
+  opacity: number // 0–1
+  locked: boolean
+  hidden?: boolean
+  calibrated?: boolean // ölçek iki noktayla ayarlandı mı
 }
 
 export type HazardClass = 'off' | 'light' | 'oh1' | 'oh2' | 'eh1' | 'eh2' | 'custom'

@@ -176,6 +176,9 @@ isOneToOne: false
 "can_edit_project":
 { Args: { "pid": string }; Returns: boolean
                            },
+"can_write_project":
+{ Args: { "pid": string }; Returns: boolean
+                           },
 "create_company":
 { Args: { "p_name": string }; Returns: string
                            },
@@ -193,6 +196,9 @@ isOneToOne: false
                            },
 "my_company_role":
 { Args: { "cid": string }; Returns: string
+                           },
+"plan_project_id":
+{ Args: { "p_name": string }; Returns: string
                            },
 "release_project_lock":
 { Args: { "p_project": string }; Returns: undefined

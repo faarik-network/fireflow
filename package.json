@@ -8,7 +8,7 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "test:solver": "tsx utils/hydraulicSolver.test.ts",
-    "db:start": "supabase start -x studio,imgproxy,storage-api,edge-runtime,logflare,vector,mailpit,realtime,supavisor,postgres-meta",
+    "db:start": "supabase start -x studio,imgproxy,edge-runtime,logflare,vector,mailpit,realtime,supavisor,postgres-meta",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
@@ -20,6 +20,7 @@
     "@nuxtjs/tailwindcss": "^6.12.0",
     "@pinia/nuxt": "^0.5.5",
     "nuxt": "^3.14.0",
+    "pdfjs-dist": "^4.10.38",
     "pinia": "^2.2.0",
     "vue": "latest",
     "vue-router": "latest"

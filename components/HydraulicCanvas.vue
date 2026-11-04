@@ -10,7 +10,26 @@ let w = 0, h = 0, dpr = 1, raf = 0
 
 const mouse = ref<{ x: number; y: number } | null>(null) // world
 const pipeStart = ref<string | null>(null)
-let drag: { id: string } | { pan: true; sx: number; sy: number; px: number; py: number } | null = null
+let drag: { id: string } | { pan: true; sx: number; sy: number; px: number; py: number } | { plan: true; sx: number; sy: number; ox: number; oy: number } | null = null
+/** Plan ölçekleme: tıklanan noktalar (dünya) */
+const calib = ref<{ x: number; y: number }[]>([])
+
+// ---------- Arka plan planı görseli (özel bucket: imzalı URL) ----------
+const client = useSupabaseClient()
+let planImg: HTMLImageElement | null = null
+let planPath = ''
+watch(() => sim.background?.path, async (path) => {
+  planImg = null
+  planPath = path ?? ''
+  schedule()
+  if (!path) return
+  const { data } = await client.storage.from(PLAN_BUCKET).createSignedUrl(path, 3600)
+  if (!data || planPath !== path) return
+  const img = new Image()
+  img.crossOrigin = 'anonymous' // rapor için canvas.toDataURL kirlenmesin
+  img.onload = () => { if (planPath === path) { planImg = img; schedule() } }
+  img.src = data.signedUrl
+}, { immediate: true })
 
 const PAL = {
   dark: { bg: '#0E1822', halo: 'rgba(14,24,34,.9)', ink: '#E6EEF4', steel: '#8FB0C8', name: '#B9CBD9', off: '#64748B', fire: '#FF5A36', ok: '#2FBF71', warn: '#F2A33A', grid: '#1A2B3A', sel: '#60A5FA', pump: '#4C8DFF', idle: '#64748B' },
@@ -50,6 +69,22 @@ function hitPipe(wx: number, wy: number) {
 function onDown(e: PointerEvent) {
   canvas.value!.setPointerCapture(e.pointerId)
   const s = rel(e), p = toWorld(s.x, s.y)
+  const bg = sim.background
+  if (e.button === 0 && sim.planMode && bg && !sim.readOnly) {
+    if (sim.planMode === 'move') { if (!bg.locked) drag = { plan: true, sx: s.x, sy: s.y, ox: bg.x, oy: bg.y }; return }
+    calib.value = [...calib.value, p]
+    if (calib.value.length === 2) {
+      const [a, b] = calib.value
+      // Diyalogdan önce ikinci nokta ve çizgi görünsün
+      requestAnimationFrame(() => setTimeout(() => {
+        const m = Number(prompt('İki nokta arasındaki gerçek mesafe (metre):')?.replace(',', '.'))
+        if (m > 0) sim.calibratePlan(a, b, m)
+        calib.value = []
+        sim.planMode = null
+      }))
+    }
+    return
+  }
   const node = hitNode(p.x, p.y)
   const tool = sim.tool
 
@@ -80,9 +115,13 @@ function onDown(e: PointerEvent) {
 }
 function onMove(e: PointerEvent) {
   const s = rel(e), p = toWorld(s.x, s.y)
-  mouse.value = sim.snapPt(p.x, p.y)
+  mouse.value = sim.planMode === 'calibrate' ? p : sim.snapPt(p.x, p.y)
   if (!drag) return
-  if ('pan' in drag) {
+  if ('plan' in drag) {
+    if (!sim.background) return
+    sim.background.x = drag.ox + (s.x - drag.sx) / sim.view.zoom
+    sim.background.y = drag.oy + (s.y - drag.sy) / sim.view.zoom
+  } else if ('pan' in drag) {
     sim.view.panX = drag.px + (s.x - drag.sx)
     sim.view.panY = drag.py + (s.y - drag.sy)
   } else {
@@ -122,15 +161,17 @@ function onKey(e: KeyboardEvent) {
     if (t && (!sim.readOnly || t.id === 'select')) { e.preventDefault(); sim.tool = t.id }
     return
   }
-  if (e.key === 'Escape') { pipeStart.value = null; sim.tool = 'select' }
+  if (e.key === 'Escape') { pipeStart.value = null; calib.value = []; sim.planMode = null; sim.tool = 'select' }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sim.selected) {
     sim.selected.kind === 'node' ? sim.removeNode(sim.selected.id) : sim.removePipe(sim.selected.id)
   }
 }
 
 function fit() {
-  if (!sim.nodes.length || !w) return
+  const bg = sim.background && !sim.background.hidden ? sim.background : null
+  if ((!sim.nodes.length && !bg) || !w) return
   const xs = sim.nodes.map((n) => n.x), ys = sim.nodes.map((n) => n.y)
+  if (bg) { xs.push(bg.x, bg.x + bg.w * bg.scale); ys.push(bg.y, bg.y + bg.h * bg.scale) }
   const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
   const pad = 80
   const z = Math.min(2, Math.max(0.15, Math.min((w - pad * 2) / Math.max(maxX - minX, 1), (h - pad * 2) / Math.max(maxY - minY, 1))))
@@ -149,6 +190,24 @@ function draw(ts = performance.now()) {
   ctx.clearRect(0, 0, w, h)
   ctx.fillStyle = COL.bg
   ctx.fillRect(0, 0, w, h)
+
+  // arka plan planı (koyu temada renkleri ters çevir: beyaz kâğıt koyu zemine uyar)
+  const bg = sim.background
+  if (bg && !bg.hidden && planImg) {
+    ctx.save()
+    ctx.translate(panX, panY); ctx.scale(zoom, zoom)
+    ctx.globalAlpha = bg.opacity
+    if (theme.value === 'dark') ctx.filter = 'invert(1) hue-rotate(180deg)'
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(planImg, bg.x, bg.y, bg.w * bg.scale, bg.h * bg.scale)
+    ctx.restore()
+    if (sim.planMode === 'move') {
+      ctx.save()
+      ctx.strokeStyle = COL.sel; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4])
+      ctx.strokeRect(panX + bg.x * zoom, panY + bg.y * zoom, bg.w * bg.scale * zoom, bg.h * bg.scale * zoom)
+      ctx.restore()
+    }
+  }
 
   // grid
   ctx.save()
@@ -239,6 +298,14 @@ function draw(ts = performance.now()) {
   }
   flushLabels(zoom, obstacles, [x0, y0, x1, y1])
   ctx.restore()
+
+  // plan ölçekleme: seçilen noktalar ve fareye uzanan ölçü çizgisi (ekran koordinatı)
+  if (sim.planMode === 'calibrate') {
+    const pts = [...calib.value, ...(calib.value.length === 1 && mouse.value ? [mouse.value] : [])].map((q) => ({ x: panX + q.x * zoom, y: panY + q.y * zoom }))
+    ctx.strokeStyle = COL.fire; ctx.fillStyle = COL.fire; ctx.lineWidth = 2
+    if (pts.length === 2) { ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); ctx.stroke(); ctx.setLineDash([]) }
+    calib.value.forEach((_, i) => { const q = pts[i]; ctx!.beginPath(); ctx!.moveTo(q.x - 7, q.y); ctx!.lineTo(q.x + 7, q.y); ctx!.moveTo(q.x, q.y - 7); ctx!.lineTo(q.x, q.y + 7); ctx!.stroke() })
+  }
   if (animating) raf = requestAnimationFrame(draw)
 }
 
@@ -357,10 +424,11 @@ onBeforeUnmount(() => { ro?.disconnect(); window.removeEventListener('keydown', 
 
 watch(theme, (t) => { COL = { ...PAL[t] }; schedule() })
 watch(() => sim.fitRequest, () => nextTick(() => { fit(); schedule() }))
-watch(() => sim.tool, () => { pipeStart.value = null })
-watch([() => sim.showLabels, () => sim.nodes, () => sim.pipes, () => sim.view, () => sim.selected, () => sim.result, mouse, pipeStart], schedule, { deep: true })
+watch(() => sim.tool, () => { pipeStart.value = null; sim.planMode = null })
+watch(() => sim.planMode, () => { calib.value = [] })
+watch([() => sim.showLabels, () => sim.nodes, () => sim.pipes, () => sim.view, () => sim.selected, () => sim.result, () => sim.background, () => sim.planMode, mouse, pipeStart, calib], schedule, { deep: true })
 
-const cursor = computed(() => (sim.tool === 'select' ? 'default' : sim.tool === 'delete' ? 'not-allowed' : 'crosshair'))
+const cursor = computed(() => (sim.planMode === 'move' ? (sim.background?.locked ? 'not-allowed' : 'move') : sim.planMode === 'calibrate' || sim.tool !== 'select' ? (sim.tool === 'delete' && !sim.planMode ? 'not-allowed' : 'crosshair') : 'default'))
 </script>
 
 <template>
@@ -373,7 +441,9 @@ const cursor = computed(() => (sim.tool === 'select' ? 'default' : sim.tool === 
     />
     <div class="pointer-events-none absolute inset-x-2 bottom-2 flex flex-wrap items-end justify-between gap-2 text-xs">
       <div class="min-w-0 max-w-full rounded bg-white/90 px-2 py-1 text-slate-600">
-        <span v-if="sim.tool === 'pipe' || sim.tool === 'pump'">{{ sim.tool === 'pump' ? 'Pompa: emme düğümünden basma düğümüne tıklayın (yön önemli)' : 'Boru: düğümlere tıklayın' }} · Esc ile bitir</span>
+        <span v-if="sim.planMode === 'move'"><b>Planı taşı</b> · sürükleyin · Esc: bitir</span>
+        <span v-else-if="sim.planMode === 'calibrate'"><b>Planı ölçekle</b> · ölçüsünü bildiğiniz iki noktaya tıklayın ({{ calib.length }}/2) · Esc: vazgeç</span>
+        <span v-else-if="sim.tool === 'pipe' || sim.tool === 'pump'">{{ sim.tool === 'pump' ? 'Pompa: emme düğümünden basma düğümüne tıklayın (yön önemli)' : 'Boru: düğümlere tıklayın' }} · Esc ile bitir</span>
         <span v-else-if="sim.tool !== 'select'"><b>{{ TOOLS.find((t) => t.id === sim.tool)?.label }}</b> · tuvale tıklayın · Esc: Seç aracına dön</span>
         <span v-else>Çift tık: aç-kapat · Tekerlek: yakınlaştır · Sağ tuş: kaydır · Del: sil · 1–8: araçlar · Ctrl+Z / Ctrl+Y: geri al / yinele</span>
       </div>
